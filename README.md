@@ -109,6 +109,8 @@ Set `VITE_ENABLE_MOCK_AUTH=false` in `.env.local` to use real auth. The Vite ser
 
 FastAPI's `GET /api/me` forwards the incoming Better Auth session cookie to `GET /api/auth/get-session`; it does not read or write Better Auth tables. Missing or expired sessions return `401` with an `UNAUTHENTICATED` error code.
 
+Future document and learning routes must use the authenticated `AuthUser` and enforce resource ownership with the API ownership check. Query persisted resources by both their ID and owner ID, and return a generic `404` when the resource is missing or belongs to another user.
+
 The frontend restores the session at startup. With mock auth enabled, the demo session is stored in `sessionStorage` so refresh works for the current browser tab.
 
 ### Frontend only
