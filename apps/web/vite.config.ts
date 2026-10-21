@@ -9,6 +9,7 @@ const apiProxyTarget = process.env.API_PROXY_URL || "http://localhost:8000";
 
 export default defineConfig({
   root,
+  envDir: path.resolve(root, "../.."),
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

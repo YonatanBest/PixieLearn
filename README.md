@@ -101,8 +101,8 @@ cd services/auth && npm run dev
 cd services/api
 python -m venv .venv
 # Activate the environment, then:
-pip install -e .
-uvicorn app.main:app --reload --port 8000
+python -m pip install -e .
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
 Set `VITE_ENABLE_MOCK_AUTH=false` in `.env.local` to use real auth. The Vite server proxies `/api/auth/*` to Better Auth on port `3001` and `/api/*` to FastAPI on port `8000`. Keep `VITE_API_URL=/api` for same-origin requests and cookies.
