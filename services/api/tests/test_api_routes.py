@@ -1,4 +1,5 @@
 import httpx
+import logging
 from fastapi.testclient import TestClient
 
 import app.dependencies.auth as auth_dependency
@@ -20,11 +21,14 @@ def test_me_requires_a_session_cookie() -> None:
     assert response.json() == {
         "message": "Authentication required.",
         "code": "UNAUTHENTICATED",
+        "requestId": response.headers["X-Request-ID"],
     }
+    assert len(response.headers["X-Request-ID"]) == 36
 
 
-def test_me_forwards_the_session_cookie_to_better_auth(monkeypatch) -> None:
+def test_me_forwards_the_session_cookie_without_logging_it(monkeypatch, caplog) -> None:
     calls: list[tuple[str, dict[str, str]]] = []
+    caplog.set_level(logging.INFO, logger="pixielearn.api")
     monkeypatch.setitem(
         app.dependency_overrides,
         get_settings,
@@ -78,6 +82,39 @@ def test_me_forwards_the_session_cookie_to_better_auth(monkeypatch) -> None:
             {"Cookie": "better-auth.session_token=session-cookie-value"},
         )
     ]
+    assert response.headers["X-Request-ID"] in caplog.text
+    assert "session-cookie-value" not in caplog.text
+
+
+def test_unexpected_errors_return_a_retry_message_and_log_no_request_secrets(caplog) -> None:
+    caplog.set_level(logging.INFO, logger="pixielearn.api")
+
+    async def fail_with_sensitive_detail():
+        raise RuntimeError("private document text")
+
+    app.add_api_route("/__test__/unexpected-error", fail_with_sensitive_detail)
+    try:
+        response = TestClient(app, raise_server_exceptions=False).get(
+            "/__test__/unexpected-error",
+            headers={"Authorization": "Bearer private-token"},
+        )
+    finally:
+        app.router.routes[:] = [
+            route
+            for route in app.router.routes
+            if getattr(route, "endpoint", None) is not fail_with_sensitive_detail
+        ]
+
+    request_id = response.headers["X-Request-ID"]
+    assert response.status_code == 500
+    assert response.json() == {
+        "message": "The request failed unexpectedly. Please try again.",
+        "code": "INTERNAL_ERROR",
+        "requestId": request_id,
+    }
+    assert request_id in caplog.text
+    assert "private document text" not in caplog.text
+    assert "private-token" not in caplog.text
 
 
 def test_me_accepts_a_secure_better_auth_cookie(monkeypatch) -> None:
@@ -185,4 +222,5 @@ def test_me_reports_auth_provider_outages_as_service_unavailable(monkeypatch) ->
     assert response.json() == {
         "message": "Auth provider is unavailable.",
         "code": "REQUEST_FAILED",
+        "requestId": response.headers["X-Request-ID"],
     }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express from "express";
 import { toNodeHandler } from "better-auth/node";
@@ -6,11 +7,25 @@ import { env } from "./env.js";
 
 const app = express();
 
+app.use((request, response, next) => {
+  const requestId = randomUUID();
+  const startedAt = process.hrtime.bigint();
+  response.setHeader("X-Request-ID", requestId);
+  response.on("finish", () => {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    console.info(
+      `request_completed request_id=${requestId} method=${request.method} path=${request.path} status_code=${response.statusCode} duration_ms=${durationMs.toFixed(2)}`,
+    );
+  });
+  next();
+});
+
 app.use(
   cors({
     origin: env.frontendUrl,
     credentials: true,
     methods: ["GET", "POST", "OPTIONS"],
+    exposedHeaders: ["X-Request-ID"],
   }),
 );
 
