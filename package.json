@@ -7,21 +7,27 @@
     "dev": "vite --config apps/web/vite.config.ts",
     "build": "vite build --config apps/web/vite.config.ts",
     "preview": "vite preview --config apps/web/vite.config.ts",
-    "format": "oxfmt"
+    "format": "oxfmt",
+    "test": "npm run test:web && npm run test:api && npm run test:auth",
+    "test:web": "vitest run",
+    "test:api": "python -m pytest services/api/tests",
+    "test:auth": "npm --prefix services/auth test"
   },
   "dependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.0.0",
-    "tailwindcss": "^4.0.0",
-    "@tailwindcss/vite": "^4.0.0",
+    "jsdom": "^29.1.1",
     "oxfmt": "^0.2.0",
+    "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
-    "vite": "^8.0.5"
+    "vite": "^8.0.5",
+    "vitest": "^4.1.12"
   }
 }
