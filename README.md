@@ -2,7 +2,7 @@
 
 PixieLearn is a web-first AI learning workspace that turns PDF and document study into an interactive lesson. Pixie, the built-in AI tutor, helps learners understand what they are reading through explanations, visual highlights, quizzes, captions, and whiteboard diagrams.
 
-> **Current status:** PixieLearn is an interface prototype focused on the core PDF learning experience. AI services, document ingestion, speech generation, and persistence are planned product layers.
+> **Current status:** PixieLearn includes Better Auth sign-in and a private PDF/PPTX document library backed by PostgreSQL and S3-compatible object storage. Document rendering, conversion, OCR, and AI lesson workflows are being added in later stories.
 
 ## Highlights
 
@@ -80,15 +80,18 @@ cp services/auth/.env.example services/auth/.env
 cp services/api/.env.example services/api/.env
 ```
 
-Set the same `DATABASE_URL` in `services/auth/.env` and `services/api/.env` as needed. Replace `BETTER_AUTH_SECRET` with a private random value of at least 32 characters. Google sign-in is enabled when both Google credentials are set. Email/password auth and session restoration work without them.
+Point `services/auth/.env` and `services/api/.env` at the same database host, name, and credentials. The API URL uses SQLAlchemy's `postgresql+psycopg://` scheme as shown in its example. Replace `BETTER_AUTH_SECRET` with a private random value of at least 32 characters. Google sign-in is enabled when both Google credentials are set. Email/password auth and session restoration work without them.
 
-Start PostgreSQL and run Better Auth's schema migration:
+Start PostgreSQL and MinIO, apply the Better Auth and product API schemas, then start the services:
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres minio minio-public
 cd services/auth
 npm install
 npm run db:migrate
+cd ../api
+python -m pip install -e "[dev]"
+alembic upgrade head
 ```
 
 In separate terminals, start the services:
@@ -108,6 +111,8 @@ python -m uvicorn app.main:app --reload --port 8000
 Set `VITE_ENABLE_MOCK_AUTH=false` in `.env.local` to use real auth. The Vite server proxies `/api/auth/*` to Better Auth on port `3001` and `/api/*` to FastAPI on port `8000`. Keep `VITE_API_URL=/api` for same-origin requests and cookies.
 
 FastAPI's `GET /api/me` forwards the incoming Better Auth session cookie to `GET /api/auth/get-session`; it does not read or write Better Auth tables. Missing or expired sessions return `401` with an `UNAUTHENTICATED` error code.
+
+The document API stores file metadata in PostgreSQL and originals in a private MinIO bucket. `services/api/.env.example` contains local database and storage settings. The API creates the development bucket on first upload. Signed URLs expire after five minutes. Local browser downloads use the MinIO proxy on port `9100` to add the frontend CORS headers; set `OBJECT_STORAGE_PUBLIC_ENDPOINT_URL` to the browser-accessible object-store or proxy address. Set `OBJECT_STORAGE_CREATE_BUCKET_IF_MISSING=false` in deployment and provision the bucket separately. Deployment buckets must allow `GET` from the configured frontend origin through S3 CORS. Future document and learning routes must keep database lookups scoped to both the resource ID and authenticated owner ID.
 
 Future document and learning routes must use the authenticated `AuthUser` and enforce resource ownership with the API ownership check. Query persisted resources by both their ID and owner ID, and return a generic `404` when the resource is missing or belongs to another user.
 

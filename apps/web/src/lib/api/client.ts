@@ -18,10 +18,15 @@ type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
 };
 
+function isFormData(body: unknown): body is FormData {
+  return typeof FormData !== "undefined" && body instanceof FormData;
+}
+
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/json");
-  if (options.body !== undefined) headers.set("Content-Type", "application/json");
+  const formDataBody = isFormData(options.body);
+  if (options.body !== undefined && !formDataBody) headers.set("Content-Type", "application/json");
 
   let response: Response;
   try {
@@ -29,7 +34,11 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       ...options,
       headers,
       credentials: "include",
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.body === undefined
+        ? undefined
+        : isFormData(options.body)
+          ? options.body
+          : JSON.stringify(options.body),
     });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") throw error;

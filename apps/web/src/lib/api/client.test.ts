@@ -35,6 +35,24 @@ describe("apiRequest", () => {
     );
   });
 
+  it("sends multipart bodies without overriding the browser boundary header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: "document-1" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const formData = new FormData();
+    formData.append("file", new File(["%PDF-1.7"], "lecture.pdf", { type: "application/pdf" }));
+
+    await apiRequest("/documents", { method: "POST", body: formData });
+
+    const [, options] = fetchMock.mock.calls[0];
+    expect(options.body).toBe(formData);
+    expect(new Headers(options.headers).has("Content-Type")).toBe(false);
+  });
+
   it("turns an API error response into an ApiError with status and code", async () => {
     vi.stubGlobal(
       "fetch",

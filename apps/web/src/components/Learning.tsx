@@ -1,5 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { Icon, IconButton, MuteButton, type IconName } from "./Icon";
+import DocumentLibrary from "../features/documents/DocumentLibrary";
 
 export type TeacherState = "teaching" | "quiz" | "feedback" | "question" | "paused" | "complete";
 
@@ -275,16 +276,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
 export function Home({ onStart }: { onStart: () => void }) {
   const today = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date()).toUpperCase();
   return <main className="home-view">
-    <header><div><span className="eyebrow">{today}</span><h1>Good afternoon, Alex.</h1><p>Ready to keep learning?</p></div><button type="button" className="primary-button" onClick={onStart}><Icon name="plus" /> New learning session</button></header>
-    <section className="continue-card">
-      <div className="document-cover"><span>Attention<br/>Is All<br/>You Need</span><small>Vaswani et al.</small></div>
-      <div className="continue-copy"><span className="eyebrow">CONTINUE LEARNING</span><h2>Scaled Dot-Product Attention</h2><p>Pick up where you left off in the Transformer architecture paper.</p><div className="home-progress" aria-label="68 percent complete"><i></i></div><small>68% complete · 8 min remaining</small><button type="button" className="primary-button" onClick={onStart}><Icon name="play" /> Resume lesson</button></div>
-      <div className="session-summary"><span><Icon name="clock" /><b>12 min</b><small>Last session</small></span><span><Icon name="check" /><b>4 / 5</b><small>Quiz score</small></span></div>
-    </section>
-    <div className="home-section-head"><h2>Recent learning</h2><button type="button" onClick={onStart}>View all <Icon name="chevron" /></button></div>
-    <section className="recent-grid">
-      {[["NN", "Neural Networks & Deep Learning", "Chapter 4 · Backpropagation", "31%"], ["LA", "Linear Algebra Done Right", "Chapter 6 · Inner Product Spaces", "12%"], ["RL", "Reinforcement Learning", "Chapter 3 · Finite MDPs", "54%"]].map((doc) => <button type="button" className="learning-card" key={doc[0]} onClick={onStart}><span className={`mini-cover cover-${doc[0].toLowerCase()}`}>{doc[0]}</span><span><b>{doc[1]}</b><small>{doc[2]}</small><span className="card-progress" aria-label={`${doc[3]} complete`}><i style={{ width: doc[3] }}></i></span><em>{doc[3]} complete</em></span><Icon name="more" /></button>)}
-    </section>
-    <section className="drop-zone"><div className="upload-icon"><Icon name="upload" /></div><div><b>Start with a new document</b><span>Drop a PDF here, or <button type="button" onClick={onStart}>browse files</button></span></div><small>PDF up to 100 MB</small></section>
+    <header><div><span className="eyebrow">{today}</span><h1>Your learning library</h1><p>Pick up with your documents whenever you are ready.</p></div><button type="button" className="primary-button" onClick={onStart}><Icon name="plus" /> New learning session</button></header>
+    <DocumentLibrary />
   </main>;
 }
