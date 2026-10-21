@@ -15,6 +15,8 @@ type BetterAuthResponse = {
   };
 };
 
+const MOCK_SESSION_KEY = "pixielearn.demo-user";
+
 function mapUser(user: BetterAuthResponse["user"]): AuthUser {
   return {
     id: user.id,
@@ -31,6 +33,11 @@ const demoUser: AuthUser = {
 };
 
 class HttpAuthService implements AuthService {
+  async getSession() {
+    const response = await apiRequest<BetterAuthResponse | null>("/auth/get-session");
+    return response?.user ? mapUser(response.user) : null;
+  }
+
   async login(credentials: LoginCredentials) {
     const response = await apiRequest<BetterAuthResponse>("/auth/sign-in/email", {
       method: "POST",
@@ -52,15 +59,15 @@ class HttpAuthService implements AuthService {
   }
 
   async loginWithGoogle() {
-    const response = await apiRequest<BetterAuthResponse>("/auth/sign-in/social", {
+    const response = await apiRequest<{ url?: string; redirect?: boolean; user?: BetterAuthResponse["user"] }>("/auth/sign-in/social", {
       method: "POST",
       body: {
         provider: "google",
         callbackURL: window.location.origin,
-        disableRedirect: true,
       },
     });
-    return mapUser(response.user);
+    if (response.url) window.location.assign(response.url);
+    return response.user ? mapUser(response.user) : null;
   }
 
   async requestPasswordReset(email: string) {
@@ -79,21 +86,38 @@ class HttpAuthService implements AuthService {
 }
 
 class MockAuthService implements AuthService {
+  async getSession() {
+    const storedUser = sessionStorage.getItem(MOCK_SESSION_KEY);
+    if (!storedUser) return null;
+    try {
+      return JSON.parse(storedUser) as AuthUser;
+    } catch {
+      sessionStorage.removeItem(MOCK_SESSION_KEY);
+      return null;
+    }
+  }
+
   async login() {
+    sessionStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(demoUser));
     return demoUser;
   }
 
   async signup(credentials: SignupCredentials) {
-    return { ...demoUser, name: credentials.name, email: credentials.email };
+    const user = { ...demoUser, name: credentials.name, email: credentials.email };
+    sessionStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(user));
+    return user;
   }
 
   async loginWithGoogle() {
+    sessionStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(demoUser));
     return demoUser;
   }
 
   async requestPasswordReset() {}
 
-  async logout() {}
+  async logout() {
+    sessionStorage.removeItem(MOCK_SESSION_KEY);
+  }
 }
 
 export const authService: AuthService = appConfig.useMockAuth ? new MockAuthService() : new HttpAuthService();

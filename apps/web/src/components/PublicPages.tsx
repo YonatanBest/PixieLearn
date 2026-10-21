@@ -37,7 +37,8 @@ export function AuthPage({ mode, onModeChange, onAuthenticated }: { mode: "login
     setError("");
     setLoading(true);
     try {
-      onAuthenticated(await authService.loginWithGoogle());
+      const user = await authService.loginWithGoogle();
+      if (user) onAuthenticated(user);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Google authentication failed. Please try again.");
     } finally {

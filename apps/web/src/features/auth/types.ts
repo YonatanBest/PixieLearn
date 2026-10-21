@@ -20,9 +20,10 @@ export type SignupCredentials = {
 };
 
 export interface AuthService {
+  getSession(): Promise<AuthUser | null>;
   login(credentials: LoginCredentials): Promise<AuthUser>;
   signup(credentials: SignupCredentials): Promise<AuthUser>;
-  loginWithGoogle(): Promise<AuthUser>;
+  loginWithGoogle(): Promise<AuthUser | null>;
   requestPasswordReset(email: string): Promise<void>;
   logout(): Promise<void>;
 }
