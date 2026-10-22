@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     document_max_size_bytes: int = Field(default=104_857_600, ge=1, le=104_857_600)
     document_conversion_timeout_seconds: int = Field(default=900, ge=30, le=3600)
     libreoffice_binary: str = "libreoffice"
+    tesseract_binary: str = "tesseract"
+    document_ocr_language: str = "eng"
+    document_ocr_dpi: int = Field(default=300, ge=72, le=600)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

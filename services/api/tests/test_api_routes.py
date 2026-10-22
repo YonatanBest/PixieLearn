@@ -18,7 +18,7 @@ from app.dependencies.ownership import assert_resource_owner
 from app.document_queue import QueueUnavailableError, get_document_queue
 from app.database import Base, get_db
 from app.main import app
-from app.models import DocumentRecord
+from app.models import DocumentPageRecord, DocumentRecord
 from app.schemas.auth import AuthUser
 from app.storage import get_document_storage
 
@@ -69,7 +69,7 @@ class MemoryDocumentQueue:
         self.document_ids: list[str] = []
         self.unavailable = False
 
-    def enqueue_conversion(self, document_id: str) -> None:
+    def enqueue_processing(self, document_id: str) -> None:
         if self.unavailable:
             raise QueueUnavailableError
         self.document_ids.append(document_id)
@@ -123,7 +123,9 @@ def test_authenticated_learner_uploads_a_private_pdf(document_api) -> None:
     assert response.json()["filename"] == "lecture.pdf"
     assert response.json()["contentType"] == "application/pdf"
     assert response.json()["sizeBytes"] == len(private_notes)
-    assert response.json()["status"] == "uploaded"
+    assert response.json()["status"] == "processing"
+    queue = app.dependency_overrides[get_document_queue]()
+    assert queue.document_ids == [response.json()["id"]]
     assert list(storage.objects.values()) == [private_notes]
 
 
@@ -168,10 +170,10 @@ def test_pptx_upload_shows_retryable_failure_when_redis_is_unavailable(document_
 
     assert response.status_code == 201
     assert response.json()["status"] == "failed"
-    assert response.json()["processingError"] == "PPTX conversion could not be queued. You can retry conversion."
+    assert response.json()["processingError"] == "Document processing could not be queued. You can retry processing."
 
 
-def test_owner_can_retry_a_failed_pptx_rendition(document_api) -> None:
+def test_owner_can_retry_a_failed_pptx_through_legacy_rendition_route(document_api) -> None:
     client, _storage, sessions = document_api
     queue = app.dependency_overrides[get_document_queue]()
     document_id = uuid4()
@@ -185,13 +187,41 @@ def test_owner_can_retry_a_failed_pptx_rendition(document_api) -> None:
                 size_bytes=12,
                 storage_key=f"documents/{document_id}/original",
                 status="failed",
-                processing_error="PPTX conversion failed. You can retry conversion.",
+                processing_error="Document conversion failed. You can retry processing.",
                 created_at=datetime.now(UTC),
             )
         )
         session.commit()
 
     response = client.post(f"/api/documents/{document_id}/retry-rendition")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processing"
+    assert response.json()["processingError"] is None
+    assert queue.document_ids == [str(document_id)]
+
+
+def test_owner_can_retry_a_failed_pdf_processing_job(document_api) -> None:
+    client, _storage, sessions = document_api
+    queue = app.dependency_overrides[get_document_queue]()
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="scan.pdf",
+                content_type="application/pdf",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                status="failed",
+                processing_error="Document text extraction failed. You can retry processing.",
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    response = client.post(f"/api/documents/{document_id}/retry-processing")
 
     assert response.status_code == 200
     assert response.json()["status"] == "processing"
@@ -397,6 +427,154 @@ def test_document_routes_reject_unauthenticated_requests(document_api, monkeypat
     monkeypatch.delitem(app.dependency_overrides, require_authenticated_user)
 
     response = client.get("/api/documents")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+def test_page_text_returns_owner_scoped_normalized_spans(document_api) -> None:
+    client, _storage, sessions = document_api
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="lecture.pdf",
+                content_type="application/pdf",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            DocumentPageRecord(
+                document_id=document_id,
+                page_index=0,
+                page_width=612,
+                page_height=792,
+                text="Pixie learns",
+                spans=[
+                    {
+                        "id": "p00000-w00000",
+                        "text": "Pixie",
+                        "source": "native",
+                        "bbox": {"x": 0.1, "y": 0.2, "width": 0.2, "height": 0.03},
+                        "confidence": None,
+                    }
+                ],
+                used_ocr=False,
+                extractor_version="1",
+            )
+        )
+        session.commit()
+
+    response = client.get(f"/api/documents/{document_id}/pages/0/text")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "pageIndex": 0,
+        "pageWidth": 612,
+        "pageHeight": 792,
+        "text": "Pixie learns",
+        "usedOcr": False,
+        "spans": [
+            {
+                "id": "p00000-w00000",
+                "text": "Pixie",
+                "source": "native",
+                "bbox": {"x": 0.1, "y": 0.2, "width": 0.2, "height": 0.03},
+                "confidence": None,
+                "lineIndex": None,
+            }
+        ],
+    }
+
+
+def test_page_text_hides_other_owners_document(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="private.pdf",
+                content_type="application/pdf",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        require_authenticated_user,
+        lambda: AuthUser(id="learner-2", name="Sam Student", email="sam@example.com"),
+    )
+
+    response = client.get(f"/api/documents/{document_id}/pages/0/text")
+
+    assert response.status_code == 404
+    assert response.json()["message"] == "Document not found."
+
+
+def test_page_text_is_unavailable_while_document_is_processing(document_api) -> None:
+    client, _storage, sessions = document_api
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="scan.pdf",
+                content_type="application/pdf",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                status="processing",
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    response = client.get(f"/api/documents/{document_id}/pages/0/text")
+
+    assert response.status_code == 409
+
+
+def test_page_text_returns_not_found_for_an_out_of_range_page(document_api) -> None:
+    client, _storage, sessions = document_api
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="lecture.pdf",
+                content_type="application/pdf",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    response = client.get(f"/api/documents/{document_id}/pages/1/text")
+
+    assert response.status_code == 404
+
+
+def test_page_text_requires_authentication(document_api, monkeypatch) -> None:
+    client, _storage, _sessions = document_api
+    monkeypatch.delitem(app.dependency_overrides, require_authenticated_user)
+
+    response = client.get(f"/api/documents/{uuid4()}/pages/0/text")
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHENTICATED"

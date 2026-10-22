@@ -14,9 +14,9 @@ from app.config import Settings, get_settings
 from app.database import get_db
 from app.dependencies.auth import require_authenticated_user
 from app.document_queue import DocumentQueue, QueueUnavailableError, get_document_queue
-from app.models import DocumentRecord
+from app.models import DocumentPageRecord, DocumentRecord
 from app.schemas.auth import AuthUser
-from app.schemas.documents import DocumentRead, DownloadUrlRead
+from app.schemas.documents import DocumentPageTextRead, DocumentRead, DownloadUrlRead
 from app.storage import DocumentStorage, StorageUnavailableError, get_document_storage
 
 logger = logging.getLogger("pixielearn.api.documents")
@@ -113,7 +113,7 @@ def upload_document(
         content_type=content_type,
         size_bytes=size_bytes,
         storage_key=storage_key,
-        status="processing" if content_type == PPTX_CONTENT_TYPE else "uploaded",
+        status="processing",
         created_at=datetime.now(UTC),
     )
     try:
@@ -127,13 +127,12 @@ def upload_document(
             logger.error("document_upload_cleanup_failed document_id=%s", document_id)
         raise HTTPException(status_code=500, detail="Could not save the document record.") from error
 
-    if content_type == PPTX_CONTENT_TYPE:
-        try:
-            queue.enqueue_conversion(str(document_id))
-        except QueueUnavailableError:
-            document.status = "failed"
-            document.processing_error = "PPTX conversion could not be queued. You can retry conversion."
-            session.commit()
+    try:
+        queue.enqueue_processing(str(document_id))
+    except QueueUnavailableError:
+        document.status = "failed"
+        document.processing_error = "Document processing could not be queued. You can retry processing."
+        session.commit()
 
     return document
 
@@ -181,7 +180,34 @@ def get_document_download_url(
     )
 
 
-@router.post("/{document_id}/retry-rendition", response_model=DocumentRead)
+def _queue_document_processing(document: DocumentRecord, session: Session, queue: DocumentQueue) -> DocumentRecord:
+    if document.status != "failed":
+        raise HTTPException(status_code=409, detail="This document is not available for processing retry.")
+
+    document.status = "processing"
+    document.processing_error = None
+    session.commit()
+    try:
+        queue.enqueue_processing(str(document.id))
+    except QueueUnavailableError:
+        document.status = "failed"
+        document.processing_error = "Document processing could not be queued. You can retry processing."
+        session.commit()
+    return document
+
+
+@router.post("/{document_id}/retry-processing", response_model=DocumentRead)
+def retry_document_processing(
+    document_id: str,
+    user: AuthUser = Depends(require_authenticated_user),
+    session: Session = Depends(get_db),
+    queue: DocumentQueue = Depends(get_document_queue),
+) -> DocumentRecord:
+    document = _document_or_404(session, document_id, user.id)
+    return _queue_document_processing(document, session, queue)
+
+
+@router.post("/{document_id}/retry-rendition", response_model=DocumentRead, include_in_schema=False)
 def retry_document_rendition(
     document_id: str,
     user: AuthUser = Depends(require_authenticated_user),
@@ -189,19 +215,30 @@ def retry_document_rendition(
     queue: DocumentQueue = Depends(get_document_queue),
 ) -> DocumentRecord:
     document = _document_or_404(session, document_id, user.id)
-    if document.content_type != PPTX_CONTENT_TYPE or document.status != "failed":
-        raise HTTPException(status_code=409, detail="This document is not available for conversion retry.")
+    if document.content_type != PPTX_CONTENT_TYPE:
+        raise HTTPException(status_code=409, detail="This document is not a presentation.")
+    return _queue_document_processing(document, session, queue)
 
-    document.status = "processing"
-    document.processing_error = None
-    session.commit()
-    try:
-        queue.enqueue_conversion(str(document.id))
-    except QueueUnavailableError:
-        document.status = "failed"
-        document.processing_error = "PPTX conversion could not be queued. You can retry conversion."
-        session.commit()
-    return document
+
+@router.get("/{document_id}/pages/{page_index}/text", response_model=DocumentPageTextRead)
+def get_document_page_text(
+    document_id: str,
+    page_index: int,
+    user: AuthUser = Depends(require_authenticated_user),
+    session: Session = Depends(get_db),
+) -> DocumentPageRecord:
+    document = _document_or_404(session, document_id, user.id)
+    if document.status != "ready":
+        raise HTTPException(status_code=409, detail="Document page text is not ready.")
+    page = session.scalar(
+        select(DocumentPageRecord).where(
+            DocumentPageRecord.document_id == document.id,
+            DocumentPageRecord.page_index == page_index,
+        )
+    )
+    if page is None:
+        raise HTTPException(status_code=404, detail="Document page not found.")
+    return page
 
 
 @router.get("/{document_id}/rendition/download-url", response_model=DownloadUrlRead)
