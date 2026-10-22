@@ -4,11 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../lib/api/client";
 
 import DocumentLibrary from "./DocumentLibrary";
-import { getDocument, listDocuments, uploadDocument, type DocumentItem } from "./service";
+import { getDocument, getDocumentRenditionUrl, listDocuments, retryDocumentRendition, uploadDocument, type DocumentItem } from "./service";
 
 vi.mock("./service", () => ({
   getDocument: vi.fn(),
+  getDocumentRenditionUrl: vi.fn(),
   listDocuments: vi.fn(),
+  retryDocumentRendition: vi.fn(),
   uploadDocument: vi.fn(),
 }));
 
@@ -19,6 +21,9 @@ const lectureDocument: DocumentItem = {
   sizeBytes: 2048,
   status: "uploaded",
   createdAt: "2026-10-21T08:00:00Z",
+  pageCount: null,
+  hasRendition: false,
+  processingError: null,
 };
 
 let container: HTMLDivElement;
@@ -38,6 +43,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(listDocuments).mockResolvedValue([]);
   vi.mocked(getDocument).mockResolvedValue(lectureDocument);
+  vi.mocked(getDocumentRenditionUrl).mockResolvedValue({ url: "https://files.example.test/rendition.pdf", expiresAt: "2026-10-21T08:05:00Z" });
+  vi.mocked(retryDocumentRendition).mockResolvedValue({ ...lectureDocument, status: "processing" });
   vi.mocked(uploadDocument).mockResolvedValue(lectureDocument);
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -45,6 +52,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root?.unmount());
   container?.remove();
+  vi.restoreAllMocks();
 });
 
 describe("document library", () => {
@@ -121,5 +129,59 @@ describe("document library", () => {
 
     expect(container.textContent).toContain("Storage is unavailable.");
     expect(container.textContent).toContain("Upload document");
+  });
+
+  it("offers retry after a PPTX conversion failure and updates its status", async () => {
+    const failedPresentation: DocumentItem = {
+      ...lectureDocument,
+      filename: "slides.pptx",
+      contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      status: "failed",
+      processingError: "PPTX conversion failed. You can retry conversion.",
+    };
+    vi.mocked(listDocuments).mockResolvedValue([failedPresentation]);
+    vi.mocked(getDocument).mockResolvedValue(failedPresentation);
+    await renderLibrary();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".document-card")?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Retry conversion");
+    expect(container.textContent).toContain("PPTX conversion failed.");
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Retry conversion"))?.click();
+      await Promise.resolve();
+    });
+
+    expect(retryDocumentRendition).toHaveBeenCalledWith("document-1");
+    expect(container.textContent).toContain("Converting your presentation to PDF");
+  });
+
+  it("opens the protected PDF rendition when conversion is ready", async () => {
+    const readyPresentation: DocumentItem = {
+      ...lectureDocument,
+      filename: "slides.pptx",
+      contentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      status: "ready",
+      pageCount: 4,
+      hasRendition: true,
+    };
+    vi.mocked(listDocuments).mockResolvedValue([readyPresentation]);
+    vi.mocked(getDocument).mockResolvedValue(readyPresentation);
+    const openWindow = vi.spyOn(window, "open").mockReturnValue(null);
+    await renderLibrary();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".document-card")?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Open PDF rendition"))?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("4 pages");
+    expect(getDocumentRenditionUrl).toHaveBeenCalledWith("document-1");
+    expect(openWindow).toHaveBeenCalledWith("https://files.example.test/rendition.pdf", "_blank", "noopener,noreferrer");
   });
 });

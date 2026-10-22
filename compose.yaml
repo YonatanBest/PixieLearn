@@ -29,6 +29,44 @@ services:
       - "9100:9100"
     volumes:
       - ./services/api/config/minio-public.conf:/etc/nginx/conf.d/default.conf:ro
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6410:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pixielearn-redis:/data
+  document-worker:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["rq", "worker", "--url", "redis://redis:6379/0", "documents"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://pixielearn:pixielearn@postgres:5432/pixielearn
+      REDIS_URL: redis://redis:6379/0
+      OBJECT_STORAGE_ENDPOINT_URL: http://minio:9000
+      OBJECT_STORAGE_REGION_NAME: us-east-1
+      OBJECT_STORAGE_BUCKET: pixielearn-documents
+      OBJECT_STORAGE_ACCESS_KEY_ID: pixielearn
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: pixielearn-local-secret
+      OBJECT_STORAGE_CREATE_BUCKET_IF_MISSING: "true"
+      DOCUMENT_CONVERSION_TIMEOUT_SECONDS: 900
+      LIBREOFFICE_BINARY: libreoffice
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+      minio:
+        condition: service_started
 volumes:
   pixielearn-postgres:
   pixielearn-minio:
+  pixielearn-redis:

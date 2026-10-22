@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.database import get_db
 from app.dependencies.auth import require_authenticated_user
+from app.document_queue import DocumentQueue, QueueUnavailableError, get_document_queue
 from app.models import DocumentRecord
 from app.schemas.auth import AuthUser
 from app.schemas.documents import DocumentRead, DownloadUrlRead
@@ -93,6 +94,7 @@ def upload_document(
     user: AuthUser = Depends(require_authenticated_user),
     session: Session = Depends(get_db),
     storage: DocumentStorage = Depends(get_document_storage),
+    queue: DocumentQueue = Depends(get_document_queue),
     settings: Settings = Depends(get_settings),
 ) -> DocumentRecord:
     filename, content_type, size_bytes = _validate_upload(file, settings)
@@ -111,7 +113,7 @@ def upload_document(
         content_type=content_type,
         size_bytes=size_bytes,
         storage_key=storage_key,
-        status="uploaded",
+        status="processing" if content_type == PPTX_CONTENT_TYPE else "uploaded",
         created_at=datetime.now(UTC),
     )
     try:
@@ -124,6 +126,14 @@ def upload_document(
         except StorageUnavailableError:
             logger.error("document_upload_cleanup_failed document_id=%s", document_id)
         raise HTTPException(status_code=500, detail="Could not save the document record.") from error
+
+    if content_type == PPTX_CONTENT_TYPE:
+        try:
+            queue.enqueue_conversion(str(document_id))
+        except QueueUnavailableError:
+            document.status = "failed"
+            document.processing_error = "PPTX conversion could not be queued. You can retry conversion."
+            session.commit()
 
     return document
 
@@ -165,6 +175,50 @@ def get_document_download_url(
     except StorageUnavailableError as error:
         raise HTTPException(status_code=503, detail="Document storage is unavailable.") from error
 
+    return DownloadUrlRead(
+        url=url,
+        expires_at=datetime.now(UTC) + timedelta(seconds=settings.object_storage_url_ttl_seconds),
+    )
+
+
+@router.post("/{document_id}/retry-rendition", response_model=DocumentRead)
+def retry_document_rendition(
+    document_id: str,
+    user: AuthUser = Depends(require_authenticated_user),
+    session: Session = Depends(get_db),
+    queue: DocumentQueue = Depends(get_document_queue),
+) -> DocumentRecord:
+    document = _document_or_404(session, document_id, user.id)
+    if document.content_type != PPTX_CONTENT_TYPE or document.status != "failed":
+        raise HTTPException(status_code=409, detail="This document is not available for conversion retry.")
+
+    document.status = "processing"
+    document.processing_error = None
+    session.commit()
+    try:
+        queue.enqueue_conversion(str(document.id))
+    except QueueUnavailableError:
+        document.status = "failed"
+        document.processing_error = "PPTX conversion could not be queued. You can retry conversion."
+        session.commit()
+    return document
+
+
+@router.get("/{document_id}/rendition/download-url", response_model=DownloadUrlRead)
+def get_document_rendition_download_url(
+    document_id: str,
+    user: AuthUser = Depends(require_authenticated_user),
+    session: Session = Depends(get_db),
+    storage: DocumentStorage = Depends(get_document_storage),
+    settings: Settings = Depends(get_settings),
+) -> DownloadUrlRead:
+    document = _document_or_404(session, document_id, user.id)
+    if document.status != "ready" or document.rendition_storage_key is None:
+        raise HTTPException(status_code=409, detail="The document rendition is not ready.")
+    try:
+        url = storage.create_download_url(document.rendition_storage_key, settings.object_storage_url_ttl_seconds)
+    except StorageUnavailableError as error:
+        raise HTTPException(status_code=503, detail="Document storage is unavailable.") from error
     return DownloadUrlRead(
         url=url,
         expires_at=datetime.now(UTC) + timedelta(seconds=settings.object_storage_url_ttl_seconds),

@@ -1,3 +1,5 @@
+import shutil
+from pathlib import Path
 from typing import BinaryIO, Protocol
 
 import boto3
@@ -10,6 +12,8 @@ from app.config import Settings, get_settings
 
 class DocumentStorage(Protocol):
     def put(self, key: str, body: BinaryIO, content_type: str) -> None: ...
+
+    def download(self, key: str, destination: BinaryIO) -> None: ...
 
     def delete(self, key: str) -> None: ...
 
@@ -78,6 +82,14 @@ class S3DocumentStorage:
     def delete(self, key: str) -> None:
         try:
             self.client.delete_object(Bucket=self.bucket, Key=key)
+        except (BotoCoreError, ClientError) as error:
+            raise StorageUnavailableError from error
+
+    def download(self, key: str, destination: BinaryIO) -> None:
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=key)
+            with response["Body"] as body:
+                shutil.copyfileobj(body, destination)
         except (BotoCoreError, ClientError) as error:
             raise StorageUnavailableError from error
 

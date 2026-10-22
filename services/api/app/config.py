@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     better_auth_cookie_name: str = "better-auth.session_token"
     better_auth_timeout_seconds: float = 5.0
     database_url: str = "postgresql+psycopg://pixielearn:pixielearn@localhost:5432/pixielearn"
+    redis_url: str = "redis://localhost:6410/0"
     object_storage_endpoint_url: str = "http://localhost:9000"
     object_storage_public_endpoint_url: str | None = None
     object_storage_region_name: str = "us-east-1"
@@ -21,6 +22,8 @@ class Settings(BaseSettings):
     object_storage_create_bucket_if_missing: bool = True
     object_storage_url_ttl_seconds: int = Field(default=300, ge=1, le=604_800)
     document_max_size_bytes: int = Field(default=104_857_600, ge=1, le=104_857_600)
+    document_conversion_timeout_seconds: int = Field(default=900, ge=30, le=3600)
+    libreoffice_binary: str = "libreoffice"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

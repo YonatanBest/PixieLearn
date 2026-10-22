@@ -410,6 +410,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .document-detail h3 { margin: 6px 0; font-size: 15px; overflow-wrap: anywhere; }
 .document-detail p { margin: 0; color: var(--muted); font-size: 10px; }
 .document-detail .document-detail-note { grid-column: 1 / -1; padding-top: 12px; border-top: 1px solid #393640; }
+.document-detail-content { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 12px; border-top: 1px solid #393640; }
+.document-detail-content p { font-size: 11px; }
+.document-detail-content .secondary-button { min-height: 32px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 .settings-view > header { display: block; }
