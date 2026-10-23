@@ -26,10 +26,6 @@ vi.mock("../features/documents/MermaidFigure", () => ({
   default: ({ title }: { title: string }) => <img alt={title} />,
 }));
 
-vi.mock("../features/documents/LearningDocumentChooser", () => ({
-  default: ({ onBrowseLibrary }: { onBrowseLibrary: () => void }) => <section aria-label="Choose a learning document"><button type="button" onClick={onBrowseLibrary}>Browse library</button></section>,
-}));
-
 let container: HTMLDivElement;
 let root: Root;
 
@@ -69,7 +65,6 @@ describe("learning workspace document session", () => {
           onWorkspaceChange={onWorkspaceChange}
           onWorkspaceCheckpoint={onWorkspaceCheckpoint}
           onOpenDocument={() => undefined}
-          onBrowseLibrary={() => undefined}
         />,
       );
     });
@@ -111,7 +106,6 @@ describe("learning workspace document session", () => {
         onWorkspaceChange={() => undefined}
         onWorkspaceCheckpoint={() => undefined}
         onOpenDocument={() => undefined}
-        onBrowseLibrary={() => undefined}
       />);
       await Promise.resolve();
     });
@@ -146,7 +140,6 @@ describe("learning workspace document session", () => {
         onWorkspaceChange={onWorkspaceChange}
         onWorkspaceCheckpoint={() => undefined}
         onOpenDocument={() => undefined}
-        onBrowseLibrary={() => undefined}
       />);
       await Promise.resolve();
     });
@@ -218,7 +211,6 @@ describe("learning workspace document session", () => {
         onWorkspaceChange={onWorkspaceChange}
         onWorkspaceCheckpoint={onWorkspaceCheckpoint}
         onOpenDocument={() => undefined}
-        onBrowseLibrary={() => undefined}
       />);
       await Promise.resolve();
     });
@@ -251,7 +243,7 @@ describe("learning workspace document session", () => {
     expect(onWorkspaceCheckpoint.mock.calls[0][1].workspaceState.whiteboardDiagrams).toEqual([]);
   });
 
-  it("opens the document chooser in the learning workspace for a new session", async () => {
+  it("does not render a duplicate document chooser without an active document", async () => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -268,10 +260,9 @@ describe("learning workspace document session", () => {
         onWorkspaceChange={() => undefined}
         onWorkspaceCheckpoint={() => undefined}
         onOpenDocument={() => undefined}
-        onBrowseLibrary={() => undefined}
       />);
     });
 
-    expect(container.querySelector("[aria-label='Choose a learning document']")).not.toBeNull();
+    expect(container.querySelector("[aria-label='Choose a learning document']")).toBeNull();
   });
 });

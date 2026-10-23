@@ -9,6 +9,7 @@ import {
   readCachedDocumentLearningState,
   saveDocumentLearningState,
   createInitialWorkspaceState,
+  buildRecentLearningDocuments,
   mockAttentionDiagram,
   normalizeWhiteboardDiagrams,
   type WorkspaceState,
@@ -55,6 +56,55 @@ describe("initial whiteboard state", () => {
       ...mockAttentionDiagram,
       source: "flowchart LR\n A --> B",
     }], true)).toEqual([mockAttentionDiagram])
+  })
+
+  it("shows only the five most recently opened ready documents outside demo mode", () => {
+    const documents: DocumentItem[] = Array.from({ length: 7 }, (_, index) => ({
+      id: `document-${index}`,
+      filename: `lecture-${index}.pdf`,
+      contentType: "application/pdf",
+      sizeBytes: 1024,
+      status: index === 6 ? "processing" : "ready",
+      createdAt: "2026-10-22T08:00:00Z",
+      pageCount: 10,
+      hasRendition: false,
+      processingError: null,
+    }))
+    const progress = documents.slice(0, 6).map((item, index) => ({
+      documentId: item.id,
+      pageIndex: index,
+      pageCount: 10,
+      zoom: 84,
+      lastOpenedAt: `2026-10-23T0${index}:00:00Z`,
+    }))
+
+    appConfig.demoMode = false
+    expect(buildRecentLearningDocuments(documents, progress).map((item) => item.id)).toEqual([
+      "document-5",
+      "document-4",
+      "document-3",
+      "document-2",
+      "document-1",
+    ])
+  })
+
+  it("shows the supplied sample document in demo mode without saved progress", () => {
+    appConfig.demoMode = true
+    const sample: DocumentItem = {
+      id: "demo-document",
+      filename: "Sample.pdf",
+      contentType: "application/pdf",
+      sizeBytes: 100,
+      status: "ready",
+      createdAt: "2026-10-23T08:00:00Z",
+      pageCount: 1,
+      hasRendition: false,
+      processingError: null,
+    }
+
+    expect(buildRecentLearningDocuments([sample], [])).toMatchObject([
+      { id: "demo-document", filename: "Sample.pdf", pageIndex: 0 },
+    ])
   })
 })
 

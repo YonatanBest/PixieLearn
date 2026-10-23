@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Icon, IconButton, type IconName } from "./Icon";
+import type { RecentLearningDocument } from "../features/documents/learningProgress";
 
 export type View = "workspace" | "home" | "learning" | "settings";
 
-export function Sidebar({ view, setView, onNewSession, collapsed, setCollapsed, theme, toggleTheme, onLogout }: { view: View; setView: (v: View) => void; onNewSession: () => void; collapsed: boolean; setCollapsed: (v: boolean) => void; theme: "dark" | "light"; toggleTheme: () => void; onLogout: () => void }) {
+export function Sidebar({ view, setView, collapsed, setCollapsed, theme, toggleTheme, onLogout, recentDocuments, activeDocumentId, onOpenRecentDocument }: { view: View; setView: (v: View) => void; collapsed: boolean; setCollapsed: (v: boolean) => void; theme: "dark" | "light"; toggleTheme: () => void; onLogout: () => void; recentDocuments: RecentLearningDocument[]; activeDocumentId: string | null; onOpenRecentDocument: (document: RecentLearningDocument) => void }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const items: { icon: IconName; label: string; value: View | "notes" }[] = [
     { icon: "home", label: "Home", value: "home" },
@@ -16,7 +17,6 @@ export function Sidebar({ view, setView, onNewSession, collapsed, setCollapsed, 
       {!collapsed && <strong>PixieLearn</strong>}
       <IconButton icon="panel" label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(!collapsed)} />
     </div>
-    <button className="new-session" onClick={onNewSession}><Icon name="plus" />{!collapsed && <span>New learning session</span>}</button>
     <nav className="main-nav" aria-label="Main navigation">
       {items.map((item) => <button key={item.label} className={`nav-item ${item.value === view ? "active" : ""}`} onClick={() => item.value !== "notes" && setView(item.value)}>
         <Icon name={item.icon} /><span>{item.label}</span>
@@ -24,11 +24,17 @@ export function Sidebar({ view, setView, onNewSession, collapsed, setCollapsed, 
     </nav>
     {!collapsed && <div className="recent">
       <div className="section-label">RECENT DOCUMENTS</div>
-      <button className="recent-doc active" onClick={() => setView("workspace")}>
-        <span className="pdf-icon">PDF</span><span><b>Attention Is All You Need</b><small>Section 3.2 · 68%</small></span>
-      </button>
-      <button className="recent-doc"><span className="pdf-icon">PDF</span><span><b>Neural Networks & Deep Learning</b><small>Chapter 4 · 31%</small></span></button>
-      <button className="recent-doc"><span className="pdf-icon">PDF</span><span><b>Linear Algebra Done Right</b><small>Chapter 6 · 12%</small></span></button>
+      {recentDocuments.slice(0, 5).map((document) => (
+        <button
+          className={`recent-doc${document.id === activeDocumentId ? " active" : ""}`}
+          key={document.id}
+          onClick={() => onOpenRecentDocument(document)}
+          title={document.filename}
+        >
+          <span className="pdf-icon">{document.contentType.includes("presentation") ? "PPT" : "PDF"}</span>
+          <span><b>{document.filename}</b><small>Page {document.pageIndex + 1} of {document.pageCount}</small></span>
+        </button>
+      ))}
     </div>}
     <div className="sidebar-bottom">
       <button className={`nav-item sidebar-control ${view === "settings" ? "active" : ""}`} onClick={() => setView("settings")} aria-label="Settings" title="Settings"><Icon name="settings" /><span>Settings</span></button>

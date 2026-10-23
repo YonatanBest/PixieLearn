@@ -10,6 +10,12 @@ export type LearningProgress = {
   lastOpenedAt: string
 }
 
+export type RecentLearningDocument = LearningDocument & {
+  contentType: string
+  pageIndex: number
+  lastOpenedAt: string
+}
+
 export type TranscriptMessage = {
   role: "user" | "assistant"
   text: string
@@ -117,6 +123,29 @@ export function normalizeWhiteboardDiagrams(
     }
     return [diagram]
   })
+}
+
+export function buildRecentLearningDocuments(
+  documents: DocumentItem[],
+  progress: LearningProgress[],
+): RecentLearningDocument[] {
+  const progressById = new Map(progress.map((item) => [item.documentId, item]))
+  return documents
+    .flatMap((item) => {
+      if (item.status !== "ready" || !item.pageCount) return []
+      const saved = progressById.get(item.id)
+      if (!appConfig.demoMode && !saved) return []
+      return [{
+        id: item.id,
+        filename: item.filename,
+        pageCount: item.pageCount,
+        contentType: item.contentType,
+        pageIndex: saved ? Math.min(saved.pageIndex, item.pageCount - 1) : 0,
+        lastOpenedAt: saved?.lastOpenedAt ?? item.createdAt,
+      }]
+    })
+    .sort((left, right) => right.lastOpenedAt.localeCompare(left.lastOpenedAt))
+    .slice(0, 5)
 }
 
 const learningStateCacheKey = (documentId: string) => `pixielearn.learning-state:${documentId}`

@@ -6,7 +6,7 @@ import { Home, Workspace } from "../components/Learning";
 import { SettingsView } from "../components/Settings";
 import { authService } from "../features/auth/service";
 import type { AuthUser } from "../features/auth/types";
-import type { LearningDocument } from "../features/documents/service";
+import { listDocuments, type LearningDocument } from "../features/documents/service";
 import MyLearning from "../features/documents/MyLearning";
 import { appConfig } from "../lib/config";
 import {
@@ -16,6 +16,9 @@ import {
   normalizeWhiteboardDiagrams,
   readCachedDocumentLearningState,
   saveDocumentLearningState,
+  getLearningProgress,
+  buildRecentLearningDocuments,
+  type RecentLearningDocument,
   type DocumentLearningState,
   type WorkspaceState,
 } from "../features/documents/learningProgress";
@@ -26,7 +29,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [publicView, setPublicView] = useState<PublicView>("landing");
-  const [view, setView] = useState<View>("workspace");
+  const [view, setView] = useState<View>("home");
   const [collapsed, setCollapsed] = useState(false);
   const [floating, setFloating] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -34,6 +37,7 @@ export default function App() {
   const [captionTransparency, setCaptionTransparency] = useState(18);
   const [captionContrast, setCaptionContrast] = useState(100);
   const [learningDocument, setLearningDocument] = useState<LearningDocument | null>(null);
+  const [recentDocuments, setRecentDocuments] = useState<RecentLearningDocument[]>([]);
   const [learningState, setLearningState] = useState<DocumentLearningState | null>(null);
   const [progressError, setProgressError] = useState("");
   const latestLearningState = useRef<DocumentLearningState | null>(null);
@@ -45,6 +49,18 @@ export default function App() {
       .finally(() => { if (active) setAuthLoading(false); });
     return () => { active = false; };
   }, []);
+  useEffect(() => {
+    if (!authUser) return;
+    let active = true;
+    Promise.all([listDocuments(), getLearningProgress()])
+      .then(([documents, progress]) => {
+        if (active) setRecentDocuments(buildRecentLearningDocuments(documents, progress));
+      })
+      .catch((reason: unknown) => {
+        if (active) setProgressError(reason instanceof Error ? reason.message : "Recent documents could not be loaded.");
+      });
+    return () => { active = false; };
+  }, [authUser]);
 
   if (authLoading) return <div className="public-shell" data-theme={theme}><main className="auth-page" aria-busy="true"><div className="auth-brand">PixieLearn</div><p>Restoring your session…</p></main></div>;
   if (!authUser) {
@@ -91,6 +107,18 @@ export default function App() {
       setCaptionTransparency(saved.workspaceState.captionTransparency);
       setCaptionContrast(saved.workspaceState.captionContrast);
       setLearningDocument(document);
+      const recentDocument: RecentLearningDocument = {
+        ...document,
+        contentType: document.filename.toLowerCase().endsWith(".pptx")
+          ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+          : "application/pdf",
+        pageIndex: saved.pageIndex,
+        lastOpenedAt: saved.lastOpenedAt,
+      };
+      setRecentDocuments((current) => [
+        recentDocument,
+        ...current.filter((item) => item.id !== document.id),
+      ].slice(0, 5));
       setView("workspace");
     } catch (reason) {
       setProgressError(reason instanceof Error ? reason.message : "Reading progress could not be saved.");
@@ -184,23 +212,10 @@ export default function App() {
     }
     setView(nextView);
   };
-  const startNewSession = () => {
-    if (learningDocument && latestLearningState.current) {
-      checkpointWorkspace(learningDocument, {
-        pageIndex: latestLearningState.current.pageIndex,
-        zoom: latestLearningState.current.zoom,
-        workspaceState: latestLearningState.current.workspaceState,
-      });
-    }
-    setLearningDocument(null);
-    latestLearningState.current = null;
-    setLearningState(null);
-    setView("workspace");
-  };
   return <div className="app-shell" data-theme={theme}>
-    <Sidebar view={view} setView={changeView} onNewSession={startNewSession} collapsed={collapsed} setCollapsed={setCollapsed} theme={theme} toggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogout={async () => { if (learningDocument && latestLearningState.current) checkpointWorkspace(learningDocument, { pageIndex: latestLearningState.current.pageIndex, zoom: latestLearningState.current.zoom, workspaceState: latestLearningState.current.workspaceState }); await authService.logout(); setAuthUser(null); setPublicView("landing"); setFloating(false); setLearningDocument(null); latestLearningState.current = null; setLearningState(null); }} />
+    <Sidebar view={view} setView={changeView} collapsed={collapsed} setCollapsed={setCollapsed} theme={theme} toggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogout={async () => { if (learningDocument && latestLearningState.current) checkpointWorkspace(learningDocument, { pageIndex: latestLearningState.current.pageIndex, zoom: latestLearningState.current.zoom, workspaceState: latestLearningState.current.workspaceState }); await authService.logout(); setAuthUser(null); setPublicView("landing"); setFloating(false); setLearningDocument(null); latestLearningState.current = null; setLearningState(null); setRecentDocuments([]); }} recentDocuments={recentDocuments} activeDocumentId={learningDocument?.id ?? null} onOpenRecentDocument={(document) => void openDocument(document)} />
     {progressError && <div className="app-error-banner" role="alert">{progressError}</div>}
-    {view === "workspace" ? <Workspace openFloating={() => setFloating(true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} learningDocument={learningDocument} learningState={learningState} onWorkspaceChange={saveWorkspace} onWorkspaceCheckpoint={checkpointWorkspace} onOpenDocument={openDocument} onBrowseLibrary={() => changeView("home")} /> : view === "home" ? <Home onStart={startNewSession} onOpenDocument={openDocument} /> : view === "learning" ? <MyLearning onOpenDocument={openDocument} onBrowseLibrary={() => changeView("home")} /> : <SettingsView />}
+    {view === "workspace" ? <Workspace openFloating={() => setFloating(true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} learningDocument={learningDocument} learningState={learningState} onWorkspaceChange={saveWorkspace} onWorkspaceCheckpoint={checkpointWorkspace} onOpenDocument={openDocument} /> : view === "home" ? <Home onOpenDocument={openDocument} /> : view === "learning" ? <MyLearning onOpenDocument={openDocument} onBrowseLibrary={() => changeView("home")} /> : <SettingsView />}
     {floating && <FloatingTutor onOpen={() => { setFloating(false); setView("workspace"); }} onLessonPaused={() => saveFloatingWorkspace({ teacherState: "paused" }, true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} whiteboardOpen={learningState?.workspaceState.whiteboardOpen ?? false} onWhiteboardOpenChange={(open) => saveFloatingWorkspace({ whiteboardOpen: open }, !open)} whiteboardDrawing={learningState?.workspaceState.whiteboardDrawing ?? []} onWhiteboardDrawingChange={(whiteboardDrawing) => saveFloatingWorkspace({ whiteboardDrawing })} whiteboardDiagrams={learningState?.workspaceState.whiteboardDiagrams ?? []} onWhiteboardDiagramsChange={(whiteboardDiagrams) => saveFloatingWorkspace({ whiteboardDiagrams })} />}
   </div>;
 }
