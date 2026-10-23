@@ -1,12 +1,16 @@
 import logging
+import re
+import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import PurePath
 from uuid import UUID, uuid4
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import Response, StreamingResponse
+from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -24,6 +28,7 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 PDF_CONTENT_TYPE = "application/pdf"
 PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+SINGLE_BYTE_RANGE = re.compile(r"bytes=(\d*)-(\d*)")
 
 
 def _validate_upload(file: UploadFile, settings: Settings) -> tuple[str, str, int]:
@@ -178,6 +183,143 @@ def get_document_download_url(
         url=url,
         expires_at=datetime.now(UTC) + timedelta(seconds=settings.object_storage_url_ttl_seconds),
     )
+
+
+@router.get("/{document_id}/learning-pdf")
+def get_learning_pdf(
+    document_id: str,
+    request: Request,
+    user: AuthUser = Depends(require_authenticated_user),
+    session: Session = Depends(get_db),
+    storage: DocumentStorage = Depends(get_document_storage),
+) -> Response:
+    document = _document_or_404(session, document_id, user.id)
+    if document.status != "ready":
+        raise HTTPException(status_code=409, detail="Document processing is not complete.")
+    pdf_key = document.rendition_storage_key if document.content_type == PPTX_CONTENT_TYPE else document.storage_key
+    if not pdf_key:
+        raise HTTPException(status_code=409, detail="The PDF rendition is not available.")
+
+    range_header = request.headers.get("range")
+    if range_header:
+        try:
+            file_size = storage.get_size(pdf_key)
+        except StorageUnavailableError as error:
+            raise HTTPException(status_code=503, detail="Document storage is unavailable.") from error
+
+        match = SINGLE_BYTE_RANGE.fullmatch(range_header.strip())
+        if not match or file_size <= 0:
+            return Response(
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                headers={"Content-Range": f"bytes */{file_size}", "Accept-Ranges": "bytes"},
+            )
+
+        first, last = match.groups()
+        if not first and not last:
+            return Response(
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                headers={"Content-Range": f"bytes */{file_size}", "Accept-Ranges": "bytes"},
+            )
+        if first:
+            start = int(first)
+            end = min(int(last), file_size - 1) if last else file_size - 1
+        else:
+            suffix_length = int(last)
+            if suffix_length <= 0:
+                return Response(
+                    status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                    headers={"Content-Range": f"bytes */{file_size}", "Accept-Ranges": "bytes"},
+                )
+            start = max(0, file_size - suffix_length)
+            end = file_size - 1
+
+        if start >= file_size or end < start:
+            return Response(
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                headers={"Content-Range": f"bytes */{file_size}", "Accept-Ranges": "bytes"},
+            )
+
+        try:
+            content, actual_size = storage.get_range(pdf_key, start, end)
+        except StorageUnavailableError as error:
+            raise HTTPException(status_code=503, detail="Document storage is unavailable.") from error
+        if actual_size != file_size or len(content) != end - start + 1:
+            raise HTTPException(status_code=502, detail="Document storage returned an incomplete PDF range.")
+        return Response(
+            content=content,
+            status_code=status.HTTP_206_PARTIAL_CONTENT,
+            media_type=PDF_CONTENT_TYPE,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(len(content)),
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Content-Disposition": f"inline; filename*=UTF-8''{quote(document.filename)}",
+                "Cache-Control": "private, no-store",
+            },
+        )
+
+    content = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
+    try:
+        storage.download(pdf_key, content)
+    except StorageUnavailableError as error:
+        content.close()
+        raise HTTPException(status_code=503, detail="Document storage is unavailable.") from error
+    content_length = content.tell()
+    content.seek(0)
+
+    def stream_content():
+        try:
+            while chunk := content.read(64 * 1024):
+                yield chunk
+        finally:
+            content.close()
+
+    return StreamingResponse(
+        stream_content(),
+        media_type=PDF_CONTENT_TYPE,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(content_length),
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(document.filename)}",
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_document(
+    document_id: str,
+    user: AuthUser = Depends(require_authenticated_user),
+    session: Session = Depends(get_db),
+    storage: DocumentStorage = Depends(get_document_storage),
+) -> Response:
+    document = _document_or_404(session, document_id, user.id)
+    document.status = "deleting"
+    storage_keys = {document.storage_key}
+    if document.rendition_storage_key:
+        storage_keys.add(document.rendition_storage_key)
+    session.commit()
+
+    try:
+        for storage_key in storage_keys:
+            storage.delete(storage_key)
+    except StorageUnavailableError as error:
+        logger.error("document_delete_storage_failed document_id=%s", document.id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document cleanup is incomplete. Retry deletion.",
+        ) from error
+
+    session.execute(delete(DocumentPageRecord).where(DocumentPageRecord.document_id == document.id))
+    session.execute(
+        delete(DocumentRecord).where(
+            DocumentRecord.id == document.id,
+            DocumentRecord.owner_id == user.id,
+            DocumentRecord.status == "deleting",
+        )
+    )
+    session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _queue_document_processing(document: DocumentRecord, session: Session, queue: DocumentQueue) -> DocumentRecord:

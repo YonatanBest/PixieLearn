@@ -15,6 +15,10 @@ class DocumentStorage(Protocol):
 
     def download(self, key: str, destination: BinaryIO) -> None: ...
 
+    def get_size(self, key: str) -> int: ...
+
+    def get_range(self, key: str, start: int, end: int) -> tuple[bytes, int]: ...
+
     def delete(self, key: str) -> None: ...
 
     def create_download_url(self, key: str, expires_in: int) -> str: ...
@@ -91,6 +95,26 @@ class S3DocumentStorage:
             with response["Body"] as body:
                 shutil.copyfileobj(body, destination)
         except (BotoCoreError, ClientError) as error:
+            raise StorageUnavailableError from error
+
+    def get_size(self, key: str) -> int:
+        try:
+            return int(self.client.head_object(Bucket=self.bucket, Key=key)["ContentLength"])
+        except (BotoCoreError, ClientError, KeyError, TypeError, ValueError) as error:
+            raise StorageUnavailableError from error
+
+    def get_range(self, key: str, start: int, end: int) -> tuple[bytes, int]:
+        try:
+            response = self.client.get_object(
+                Bucket=self.bucket,
+                Key=key,
+                Range=f"bytes={start}-{end}",
+            )
+            with response["Body"] as body:
+                content = body.read()
+            total_size = int(response["ContentRange"].rsplit("/", 1)[1])
+            return content, total_size
+        except (BotoCoreError, ClientError, KeyError, TypeError, ValueError) as error:
             raise StorageUnavailableError from error
 
     def create_download_url(self, key: str, expires_in: int) -> str:

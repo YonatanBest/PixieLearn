@@ -18,6 +18,19 @@ PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationm
 PDF_CONTENT_TYPE = "application/pdf"
 
 
+class DocumentDeletionRequested(Exception):
+    pass
+
+
+def _lock_processing_document(session, document_id: UUID) -> DocumentRecord:
+    document = session.scalar(
+        select(DocumentRecord).where(DocumentRecord.id == document_id).with_for_update()
+    )
+    if document is None or document.status != "processing":
+        raise DocumentDeletionRequested
+    return document
+
+
 def _convert_pptx(source: Path, output_directory: Path, settings) -> Path:
     output_directory.mkdir()
     profile_dir = output_directory.parent / "libreoffice-profile"
@@ -51,7 +64,9 @@ def process_document(document_id: str) -> None:
     settings = get_settings()
     storage = S3DocumentStorage(settings)
     with SessionLocal() as session:
-        document = session.scalar(select(DocumentRecord).where(DocumentRecord.id == parsed_id))
+        document = session.scalar(
+            select(DocumentRecord).where(DocumentRecord.id == parsed_id).with_for_update()
+        )
         if document is None or document.status != "processing":
             return
 
@@ -72,6 +87,7 @@ def process_document(document_id: str) -> None:
                             storage.download(document.storage_key, destination)
                         converted_path = _convert_pptx(original_path, work_dir / "converted", settings)
                         rendition_key = f"documents/{parsed_id}/rendition.pdf"
+                        document = _lock_processing_document(session, parsed_id)
                         with converted_path.open("rb") as rendition:
                             storage.put(rendition_key, rendition, PDF_CONTENT_TYPE)
                         document.rendition_storage_key = rendition_key
@@ -85,6 +101,7 @@ def process_document(document_id: str) -> None:
                 stage = "text extraction"
                 pages_processed = 0
                 for page in extract_pdf_pages(pdf_path, settings):
+                    document = _lock_processing_document(session, parsed_id)
                     session.add(
                         DocumentPageRecord(
                             document_id=parsed_id,
@@ -103,22 +120,31 @@ def process_document(document_id: str) -> None:
                 if pages_processed < 1:
                     raise RuntimeError("The PDF has no pages to process.")
 
+            document = _lock_processing_document(session, parsed_id)
             document.page_count = pages_processed
             document.processing_error = None
             document.status = "ready"
             session.commit()
+        except DocumentDeletionRequested:
+            session.rollback()
+            return
         except Exception as error:
             session.rollback()
+            failed_document = session.scalar(
+                select(DocumentRecord).where(DocumentRecord.id == parsed_id).with_for_update()
+            )
+            if failed_document is None or failed_document.status == "deleting":
+                return
+            if failed_document.status != "processing":
+                return
             session.execute(delete(DocumentPageRecord).where(DocumentPageRecord.document_id == parsed_id))
-            failed_document = session.scalar(select(DocumentRecord).where(DocumentRecord.id == parsed_id))
-            if failed_document is not None:
-                failed_document.status = "failed"
-                failed_document.processing_error = (
-                    "Document conversion failed. You can retry processing."
-                    if stage == "conversion"
-                    else "Document text extraction failed. You can retry processing."
-                )
-                session.commit()
+            failed_document.status = "failed"
+            failed_document.processing_error = (
+                "Document conversion failed. You can retry processing."
+                if stage == "conversion"
+                else "Document text extraction failed. You can retry processing."
+            )
+            session.commit()
             logger.error(
                 "document_processing_failed document_id=%s stage=%s exception_type=%s",
                 parsed_id,

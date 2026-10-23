@@ -1,6 +1,10 @@
-import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Icon, IconButton, MuteButton, type IconName } from "./Icon";
 import DocumentLibrary from "../features/documents/DocumentLibrary";
+import LearningDocumentChooser from "../features/documents/LearningDocumentChooser";
+import type { LearningDocument } from "../features/documents/service";
+
+const DocumentTextPreview = lazy(() => import("../features/documents/DocumentTextPreview"));
 
 export type TeacherState = "teaching" | "quiz" | "feedback" | "question" | "paused" | "complete";
 
@@ -134,10 +138,20 @@ export function QuizModal({ state, setState, onClose }: { state: TeacherState; s
   </div>;
 }
 
-export function TeacherPanel({ state, setState, onResizeStart }: { state: TeacherState; setState: (s: TeacherState) => void; onResizeStart: () => void }) {
+export function TeacherPanel({ state, setState, onResizeStart, selectionContext }: {
+  state: TeacherState
+  setState: (s: TeacherState) => void
+  onResizeStart: () => void
+  selectionContext: { text: string; pageIndex: number } | null
+}) {
   const [input, setInput] = useState("");
   const [muted, setMuted] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  useEffect(() => {
+    if (selectionContext) {
+      setInput(`Explain this passage from page ${selectionContext.pageIndex + 1}: "${selectionContext.text}"`);
+    }
+  }, [selectionContext]);
   const submit = (event: FormEvent) => { event.preventDefault(); if (input.trim()) { setState("question"); setInput(""); } };
   return <aside className="teacher-panel">
     <span className="teacher-resize-handle" role="separator" aria-label="Resize teacher panel" onPointerDown={onResizeStart} />
@@ -151,12 +165,12 @@ export function TeacherPanel({ state, setState, onResizeStart }: { state: Teache
         <button className="primary-button" onClick={() => setState("teaching")}>Review this section</button><button className="secondary-button">Continue to Multi-Head Attention <Icon name="chevron" /></button>
       </div> :
       <div className="teacher-content">
-        {state === "question" && <div className="user-question"><small>YOU ASKED</small><p>Why does softmax become too confident without scaling?</p></div>}
+        {state === "question" && <div className="user-question"><small>{selectionContext ? `SELECTED FROM PAGE ${selectionContext.pageIndex + 1}` : "YOU ASKED"}</small><p>{selectionContext?.text || "Why does softmax become too confident without scaling?"}</p></div>}
         <div className="speaking-label"><span className="audio-bars"><i></i><i></i><i></i><i></i></span>{state === "question" ? "ANSWERING YOUR QUESTION" : "EXPLAINING HIGHLIGHTED PASSAGE"}</div>
         <h2>{state === "question" ? "It’s about keeping the signal balanced." : "Let’s break down this equation."}</h2>
         <p>{state === "question" ? "As the key dimension grows, the dot product sums more terms. Its values spread farther apart, pushing softmax toward near-zero or near-one outputs." : "The query and key vectors determine how strongly two tokens relate to each other. Think of the query as what we’re looking for, and each key as a label describing what a token contains."}</p>
         <p>{state === "question" ? "The scaling term brings those values back into a useful range, preserving uncertainty where the model still needs to learn." : <>The scaling term <span className="inline-math">√d<sub>k</sub></span> keeps the dot products in a useful range. Without it, softmax can become overly confident as the vectors get larger.</>}</p>
-        <div className="reference-pill"><span>PAGE 3</span><b>“divide each by √d<sub>k</sub>...”</b><Icon name="chevron" /></div>
+        <div className="reference-pill"><span>PAGE {selectionContext ? selectionContext.pageIndex + 1 : 3}</span><b>{selectionContext ? `“${selectionContext.text}”` : <>“divide each by √d<sub>k</sub>...”</>}</b><Icon name="chevron" /></div>
         {state === "question" && <button className="back-explanation" onClick={() => setState("teaching")}><Icon name="previous" /> Return to explanation</button>}
       </div>}
     <div className="teacher-input-area">
@@ -166,7 +180,7 @@ export function TeacherPanel({ state, setState, onResizeStart }: { state: Teache
   </aside>;
 }
 
-export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, captionTransparency, setCaptionTransparency, captionContrast, setCaptionContrast }: { openFloating: () => void; captionsEnabled: boolean; setCaptionsEnabled: (enabled: boolean) => void; captionTransparency: number; setCaptionTransparency: (value: number) => void; captionContrast: number; setCaptionContrast: (value: number) => void }) {
+export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, captionTransparency, setCaptionTransparency, captionContrast, setCaptionContrast, learningDocument, onOpenDocument, onBrowseLibrary }: { openFloating: () => void; captionsEnabled: boolean; setCaptionsEnabled: (enabled: boolean) => void; captionTransparency: number; setCaptionTransparency: (value: number) => void; captionContrast: number; setCaptionContrast: (value: number) => void; learningDocument?: LearningDocument | null; onOpenDocument: (document: LearningDocument) => void; onBrowseLibrary: () => void }) {
   const [teacherState, setTeacherState] = useState<TeacherState>("teaching");
   const [boardOpen, setBoardOpen] = useState(false);
   const [zoom, setZoom] = useState(84);
@@ -178,6 +192,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   const [searchQuery, setSearchQuery] = useState("");
   const [searchIndex, setSearchIndex] = useState(0);
   const [searchScope, setSearchScope] = useState<"page" | "document">("document");
+  const [selectionContext, setSelectionContext] = useState<{ text: string; pageIndex: number } | null>(null);
   const resizing = useRef(false);
   useEffect(() => {
     const resize = (event: PointerEvent) => {
@@ -225,28 +240,40 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     if (!searchOccurrences.length) return;
     const nextIndex = (searchIndex + direction + searchOccurrences.length) % searchOccurrences.length;
     setSearchIndex(nextIndex);
+    setSelectionContext(null);
     setCurrentPage(searchOccurrences[nextIndex].page);
+  };
+  useEffect(() => {
+    if (learningDocument) setCurrentPage(1);
+  }, [learningDocument?.id]);
+  if (!learningDocument) return <LearningDocumentChooser onOpenDocument={onOpenDocument} onBrowseLibrary={onBrowseLibrary} />;
+  const pageCount = learningDocument.pageCount;
+  const setDocumentPage = (page: number) => {
+    setSelectionContext(null);
+    setCurrentPage(Math.min(pageCount, Math.max(1, page)));
   };
   return <main className="workspace">
     <header className="document-toolbar">
-      <div className="doc-title"><span className="pdf-badge">PDF</span><div><b>Attention Is All You Need</b><small>Vaswani et al. · 15 pages</small></div></div>
+      <div className="doc-title"><span className="pdf-badge">PDF</span><div><b title={learningDocument.filename}>{learningDocument.filename}</b><small>Your document · {pageCount} pages</small></div></div>
       <div className="page-tools">
-        <button onClick={() => setCurrentPage(Math.max(1, currentPage - 1))} aria-label="Previous page"><Icon name="previous" /></button><span><b>{currentPage}</b> / 15</span><button onClick={() => setCurrentPage(Math.min(15, currentPage + 1))} aria-label="Next page"><Icon name="next" /></button>
+        <button onClick={() => setDocumentPage(currentPage - 1)} aria-label="Previous page" disabled={currentPage <= 1}><Icon name="previous" /></button><label className="page-number-control"><span className="visually-hidden">Go to page</span><input aria-label="Go to page" type="number" min="1" max={pageCount} value={currentPage} onChange={(event) => { const page = Number(event.currentTarget.value); if (Number.isInteger(page)) setDocumentPage(page); }} /> / {pageCount}</label><button onClick={() => setDocumentPage(currentPage + 1)} aria-label="Next page" disabled={currentPage >= pageCount}><Icon name="next" /></button>
         <span className="tool-divider"></span>
         <IconButton icon="minus" label="Zoom out" onClick={() => setZoom(Math.max(68, zoom - 8))} />
         <span className="zoom-value">{zoom}%</span>
         <IconButton icon="plus" label="Zoom in" onClick={() => setZoom(Math.min(116, zoom + 8))} />
         <IconButton icon="fit" label="Fit to width" onClick={() => setZoom(84)} />
       </div>
-      <div className="doc-actions">{searchOpen ? <div className="document-search"><Icon name="search" /><input autoFocus value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSearchIndex(0); }} onKeyDown={(event) => { if (event.key === "Enter") moveSearch(event.shiftKey ? -1 : 1); if (event.key === "Escape") { setSearchOpen(false); setSearchQuery(""); } }} placeholder="Search this document..." aria-label="Search this document" /><div className="search-scope" role="group" aria-label="Search scope"><button type="button" className={searchScope === "page" ? "active" : ""} onClick={() => { setSearchScope("page"); setSearchIndex(0); }}>Page</button><button type="button" className={searchScope === "document" ? "active" : ""} onClick={() => { setSearchScope("document"); setSearchIndex(0); }}>All</button></div><span>{searchQuery ? `${searchOccurrences.length ? searchIndex + 1 : 0} of ${searchOccurrences.length}` : ""}</span><IconButton icon="previous" label="Previous result" onClick={() => moveSearch(-1)} /><IconButton icon="next" label="Next result" onClick={() => moveSearch(1)} /><IconButton icon="close" label="Close search" onClick={() => { setSearchOpen(false); setSearchQuery(""); }} /></div> : <IconButton icon="search" label="Search document" onClick={() => setSearchOpen(true)} />}<button className="outline-button" onClick={openFloating}><Icon name="expand" /> Floating tutor</button><IconButton icon="more" label="Document options" /></div>
+      <div className="doc-actions"><button className="outline-button" onClick={openFloating}><Icon name="expand" /> Floating tutor</button><IconButton icon="more" label="Document options" /></div>
     </header>
     <div className="learning-area" style={{ gridTemplateColumns: `minmax(460px, 1fr) ${teacherWidth}px` }}>
-      <section className="document-stage" style={{ "--paper-scale": zoom / 100 } as React.CSSProperties}>
-        <div className="page-location"><span>Section 3 · Model Architecture</span><small>Page {searchResults.length ? activeSearchPage : currentPage}</small></div>
-        <DocumentPage page={currentPage} searchQuery={searchQuery} />
+      <section className="document-stage learning-real-document" style={{ "--paper-scale": zoom / 100 } as React.CSSProperties}>
+        <div className="page-location"><span>Indexed page · Parsed word locations</span><small>Page {currentPage}</small></div>
+        <Suspense fallback={<p className="document-library-message" role="status">Opening your document…</p>}>
+          <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} onAskSelection={(text, pageIndex) => setSelectionContext({ text, pageIndex })} />
+        </Suspense>
         {captionsEnabled && <LiveCaptions transparency={captionTransparency} contrast={captionContrast} />}
       </section>
-      <TeacherPanel state={teacherState} setState={setTeacherState} onResizeStart={() => {
+      <TeacherPanel state={teacherState} setState={setTeacherState} selectionContext={selectionContext} onResizeStart={() => {
         resizing.current = true;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
@@ -255,10 +282,10 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     {boardOpen && <Whiteboard onClose={() => setBoardOpen(false)} />}
     <footer className="lesson-controls">
       <div className="lesson-main-controls">
-        <IconButton icon="previous" label="Previous page" onClick={() => setCurrentPage(Math.max(1, currentPage - 1))} />
+        <IconButton icon="previous" label="Previous page" onClick={() => setDocumentPage(currentPage - 1)} />
         <button className="play-control" onClick={() => setTeacherState(teacherState === "paused" ? "teaching" : "paused")} aria-label={teacherState === "paused" ? "Resume lesson" : "Pause lesson"}><Icon name={teacherState === "paused" ? "play" : "pause"} /></button>
         <IconButton icon="stop" label="End lesson" onClick={() => setTeacherState("complete")} />
-        <IconButton icon="next" label="Next page" onClick={() => setCurrentPage(Math.min(15, currentPage + 1))} />
+        <IconButton icon="next" label="Next page" onClick={() => setDocumentPage(currentPage + 1)} />
       </div>
       <div className="lesson-actions">
         <button><Icon name="repeat" />Repeat</button>
@@ -266,17 +293,17 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
         <button><Icon name="deeper" />Go deeper</button>
         <button onClick={() => setTeacherState("quiz")}><Icon name="question" />Quiz me</button>
       </div>
-      <div className="lesson-progress"><div><span>PAGE {currentPage} OF 15</span><b>Scaled Dot-Product Attention</b></div><div className="progress-track"><i style={{ width: `${pageProgress}%` }}></i><span style={{ left: `${pageProgress}%` }}></span></div><small>{estimatedMinutes === 0 ? "Final page" : `≈ ${estimatedMinutes} min at current pace`}</small></div>
+      <div className="lesson-progress"><div><span>PAGE {currentPage} OF {pageCount}</span><b>{learningDocument.filename}</b></div><div className="progress-track"><i style={{ width: `${(currentPage / pageCount) * 100}%` }}></i><span style={{ left: `${(currentPage / pageCount) * 100}%` }}></span></div><small>{currentPage === pageCount ? "Final page" : `${pageCount - currentPage} pages remaining`}</small></div>
       <div className="lesson-toggles"><button className={boardOpen ? "active" : ""} onClick={() => setBoardOpen(!boardOpen)}><Icon name="board" />Whiteboard</button><div className="caption-toggle-control" onMouseEnter={showCaptionControls} onMouseLeave={hideCaptionControls} onFocus={showCaptionControls}><button className={captionsEnabled ? "active" : ""} onClick={() => setCaptionsEnabled(!captionsEnabled)} aria-pressed={captionsEnabled} aria-label={captionsEnabled ? "Hide captions" : "Show captions"} title={captionsEnabled ? "Hide captions" : "Show captions"}><Icon name="cc" /></button>{captionsEnabled && <div className={`caption-controls ${captionControlsVisible ? "visible" : ""}`} aria-label="Caption appearance controls" onMouseEnter={showCaptionControls}><label>Contrast <input type="range" min="70" max="140" value={captionContrast} onChange={(event) => setCaptionContrast(Number(event.target.value))} /></label><label>Transparency <input type="range" min="0" max="70" value={captionTransparency} onChange={(event) => setCaptionTransparency(Number(event.target.value))} /></label></div>}</div></div>
     </footer>
     {(teacherState === "quiz" || teacherState === "feedback") && <QuizModal state={teacherState} setState={setTeacherState} onClose={() => setTeacherState("teaching")} />}
   </main>;
 }
 
-export function Home({ onStart }: { onStart: () => void }) {
+export function Home({ onStart, onOpenDocument }: { onStart: () => void; onOpenDocument?: (document: LearningDocument) => void }) {
   const today = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date()).toUpperCase();
   return <main className="home-view">
     <header><div><span className="eyebrow">{today}</span><h1>Your learning library</h1><p>Pick up with your documents whenever you are ready.</p></div><button type="button" className="primary-button" onClick={onStart}><Icon name="plus" /> New learning session</button></header>
-    <DocumentLibrary />
+    <DocumentLibrary onOpenDocument={onOpenDocument} />
   </main>;
 }

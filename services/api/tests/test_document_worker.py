@@ -31,6 +31,13 @@ class MemoryDocumentStorage:
     def delete(self, key: str) -> None:
         self.objects.pop(key, None)
 
+    def get_size(self, key: str) -> int:
+        return len(self.objects[key])
+
+    def get_range(self, key: str, start: int, end: int) -> tuple[bytes, int]:
+        content = self.objects[key]
+        return content[start : end + 1], len(content)
+
 
 def create_worker_database(
     monkeypatch: pytest.MonkeyPatch,
@@ -188,6 +195,28 @@ def test_pdf_text_processing_saves_pages_before_marking_ready(monkeypatch: pytes
         assert document is not None and document.status == "ready" and document.page_count == 1
         assert page is not None and page.text == "Native page"
     assert storage.objects == {original_key: original}
+
+
+def test_worker_does_not_process_a_document_marked_for_deletion(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import worker
+
+    document_id = uuid4()
+    sessions, original_key = create_worker_database(monkeypatch, document_id)
+    with sessions() as session:
+        document = session.get(DocumentRecord, document_id)
+        assert document is not None
+        document.status = "deleting"
+        session.commit()
+    storage = MemoryDocumentStorage(original_key, b"private original")
+    monkeypatch.setattr(worker, "S3DocumentStorage", lambda _settings: storage)
+
+    process_document(str(document_id))
+
+    assert storage.objects == {original_key: b"private original"}
+    with sessions() as session:
+        document = session.get(DocumentRecord, document_id)
+        assert document is not None
+        assert document.status == "deleting"
 
 
 def test_page_failure_removes_partial_page_rows_and_keeps_the_original(monkeypatch: pytest.MonkeyPatch) -> None:

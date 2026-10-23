@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
-DocumentStatus = Literal["uploaded", "processing", "ready", "failed"]
+DocumentStatus = Literal["uploaded", "processing", "ready", "failed", "deleting"]
 
 
 class DocumentRead(BaseModel):

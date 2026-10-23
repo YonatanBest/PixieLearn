@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiRequest } from "./client";
+import { ApiError, apiBlobRequest, apiRequest } from "./client";
 
 vi.mock("../config", () => ({
   appConfig: { apiBaseUrl: "/api" },
@@ -73,6 +73,24 @@ describe("apiRequest", () => {
     } satisfies Partial<ApiError>);
   });
 
+  it("surfaces FastAPI detail errors for page and document requests", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ detail: "Document processing is not complete." }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(apiRequest("/documents/document-1/pages/0/text")).rejects.toMatchObject({
+      name: "ApiError",
+      message: "Document processing is not complete.",
+      status: 409,
+    });
+  });
+
   it("uses a readable fallback for non-JSON error responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Unavailable", { status: 503 })));
 
@@ -100,5 +118,36 @@ describe("apiRequest", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abortError));
 
     await expect(apiRequest("/health")).rejects.toBe(abortError);
+  });
+});
+
+describe("apiBlobRequest", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("loads PDF bytes with the authenticated same-origin API request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([37, 80, 68, 70]), {
+      status: 200,
+      headers: { "Content-Type": "application/pdf" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiBlobRequest("/documents/doc-7/learning-pdf")).resolves.toEqual(new Uint8Array([37, 80, 68, 70]));
+    expect(fetchMock).toHaveBeenCalledWith("/api/documents/doc-7/learning-pdf", expect.objectContaining({
+      credentials: "include",
+      headers: { Accept: "application/pdf, application/json" },
+    }));
+  });
+
+  it("shows the authenticated endpoint error instead of an opaque PDF fetch error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: "Document not found." }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    })));
+
+    await expect(apiBlobRequest("/documents/private/learning-pdf")).rejects.toMatchObject({
+      name: "ApiError",
+      message: "Document not found.",
+      status: 404,
+    });
   });
 });
