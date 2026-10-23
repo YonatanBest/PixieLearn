@@ -49,3 +49,21 @@ class DocumentPageRecord(Base):
     spans: Mapped[list[dict]] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
     used_ocr: Mapped[bool] = mapped_column(nullable=False, default=False)
     extractor_version: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class DocumentLearningStateRecord(Base):
+    __tablename__ = "document_learning_states"
+
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    page_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    zoom: Mapped[int] = mapped_column(Integer, nullable=False)
+    workspace_state: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )
+    last_opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )

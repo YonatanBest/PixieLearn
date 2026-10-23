@@ -264,9 +264,7 @@ describe("document library", () => {
       { ...lectureDocument, status: "ready", pageCount: 2 },
     ])
     await renderLibrary()
-    const deleteButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.includes("Delete document"),
-    )
+    const deleteButton = container.querySelector<HTMLButtonElement>(".document-card-delete")
 
     await act(async () => {
       deleteButton?.click()
@@ -290,7 +288,7 @@ describe("document library", () => {
     await renderLibrary()
     await act(async () => {
       [...container.querySelectorAll("button")]
-        .find((button) => button.textContent?.includes("Delete document"))
+        .find((button) => button.classList.contains("document-card-delete"))
         ?.click()
       await Promise.resolve()
     })

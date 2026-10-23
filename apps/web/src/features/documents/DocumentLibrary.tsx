@@ -241,9 +241,14 @@ export default function DocumentLibrary({ onOpenDocument }: { onOpenDocument?: (
               </span>
               <Icon name="chevron" />
             </button>
+            <div className="document-card-actions">
+              {item.status === "failed" && <button type="button" className="secondary-button document-card-retry" onClick={() => void retryProcessing(item)} disabled={retrying}>{retrying ? "Retrying…" : "Retry processing"}</button>}
+              <button type="button" className="secondary-button document-card-delete" aria-label={`${item.status === "deleting" ? "Retry deletion of" : "Delete"} ${item.filename}`} onClick={() => void removeDocument(item)} disabled={deletingId === item.id}>
+                <Icon name="trash" size={14} />
+                <span>{deletingId === item.id ? "Deleting…" : item.status === "deleting" ? "Retry deletion" : "Delete"}</span>
+              </button>
+            </div>
             {item.processingError && <p className="document-library-error document-card-error">{item.processingError}</p>}
-            {item.status === "failed" && <button type="button" className="secondary-button document-card-retry" onClick={() => void retryProcessing(item)} disabled={retrying}>{retrying ? "Retrying…" : "Retry processing"}</button>}
-            <button type="button" className="secondary-button document-card-delete" onClick={() => void removeDocument(item)} disabled={deletingId === item.id}>{deletingId === item.id ? "Deleting…" : item.status === "deleting" ? "Retry deletion" : "Delete document"}</button>
             </div>
           ))}
         </div>
