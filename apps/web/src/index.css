@@ -113,18 +113,18 @@ button, input, select { font: inherit; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .icon { display: block; flex: 0 0 auto; }
-.app-shell { height: 100%; display: flex; color: var(--text); background: var(--bg); }
+.app-shell { position: relative; height: 100%; display: flex; color: var(--text); background: var(--bg); }
 .app-error-banner { position: fixed; z-index: 50; top: 12px; left: 50%; transform: translateX(-50%); width: min(580px, calc(100% - 32px)); padding: 11px 14px; border: 1px solid var(--error-border); border-radius: 9px; background: var(--error-bg); color: var(--error-text); box-shadow: 0 8px 30px rgba(0,0,0,.18); font-size: 12px; }
 
 .sidebar { width: 232px; flex: 0 0 232px; background: var(--sidebar); border-right: 1px solid var(--border-soft); padding: 14px 12px; display: flex; flex-direction: column; transition: width .22s ease, flex-basis .22s ease; z-index: 5; }
 .sidebar.collapsed { width: 68px; flex-basis: 68px; }
 .brand-row { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 4px; white-space: nowrap; }
 .sidebar.collapsed .brand-row { justify-content: center; padding: 0; }
-.sidebar.collapsed .logo-mark { display: none; }
 .brand-row strong { font-size: 14px; letter-spacing: -.2px; }
 .brand-row .icon-button { margin-left: auto; }
 .sidebar.collapsed .brand-row .icon-button { margin-left: 0; }
 .logo-mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: var(--logo-text); background: var(--logo-bg); box-shadow: inset 0 1px rgba(255,255,255,.18), 0 4px 12px rgba(0,0,0,.14); }
+.sidebar-brand-toggle { border: 0; padding: 0; cursor: pointer; }
 .logo-mark .logo-p { stroke: #d8a84e; stroke-width: 2.2; }
 .logo-mark .logo-l { stroke: #f4f1e8; stroke-width: 2.2; }
 .icon-button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; transition: .15s; padding: 0; }
@@ -153,6 +153,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .profile { margin-top: 7px; width: 100%; border: 0; background: transparent; display: flex; align-items: center; gap: 9px; border-radius: 9px; padding: 7px; text-align: left; cursor: pointer; }
 .profile:hover { background: var(--surface); }
 .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--surface-2); color: var(--text); display: grid; place-items: center; font-size: 10px; font-weight: 700; flex: 0 0 auto; }
+.profile-avatar-image { object-fit: cover; }
 .profile > span:nth-child(2) { min-width: 0; display: grid; gap: 2px; }
 .profile b { font-size: 11px; }
 .profile small { font-size: 9px; color: var(--muted-2); white-space: nowrap; }
@@ -717,9 +718,15 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 [data-theme="light"] .quiz-modal { border-color: #c8c8c3; box-shadow: 0 28px 90px rgba(0,0,0,.2), 0 0 0 1px rgba(0,0,0,.03); }
 
 @media (max-width: 1220px) {
-  .sidebar { width: 68px; flex-basis: 68px; }
-  .sidebar .brand-row strong, .sidebar .nav-item span, .sidebar .recent, .sidebar .profile > span:not(.avatar), .sidebar .profile .icon { display: none; }
-  .sidebar .nav-item { justify-content: center; padding: 0; }
+  .sidebar:not(.responsive-expanded) { width: 68px; flex-basis: 68px; }
+  .sidebar.responsive-expanded { position: absolute; inset: 0 auto 0 0; width: 232px; flex-basis: 232px; box-shadow: var(--shadow); }
+  .sidebar:not(.responsive-expanded) .brand-row strong,
+  .sidebar:not(.responsive-expanded) .nav-item span,
+  .sidebar:not(.responsive-expanded) .recent,
+  .sidebar:not(.responsive-expanded) .profile > span:not(.avatar),
+  .sidebar:not(.responsive-expanded) .profile .icon { display: none; }
+  .sidebar:not(.responsive-expanded) .nav-item { width: 42px; justify-content: center; margin-inline: auto; padding: 0; }
+  .sidebar:not(.responsive-expanded) .profile { width: 42px; justify-content: center; margin-inline: auto; padding: 6px; }
   .learning-area { grid-template-columns: minmax(430px,1fr) 330px; }
   .outline-button { padding: 0 8px; }
   .outline-button { font-size: 0; }
