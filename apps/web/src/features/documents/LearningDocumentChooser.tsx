@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { ApiError } from "../../lib/api/client"
 import { deleteDocument, getDocument, listDocuments, retryDocumentProcessing, uploadDocument, type DocumentItem, type LearningDocument } from "./service"
+import { appConfig } from "../../lib/config"
 
 const messageFor = (error: unknown) => error instanceof ApiError ? error.message : "Could not connect to your documents. Try again."
 
@@ -100,12 +101,15 @@ export default function LearningDocumentChooser({ onOpenDocument, onBrowseLibrar
       </header>
       <section className="session-chooser-content" aria-label="Choose a learning document">
         <div className="session-chooser-heading">
-          <div><span className="eyebrow">YOUR DOCUMENTS</span><h1>What would you like to learn?</h1><p>Choose a processed file to open it in your learning workspace.</p></div>
-          <button type="button" className="primary-button" onClick={() => inputRef.current?.click()} disabled={uploading}>
-            {uploading ? "Uploading…" : "Upload a file"}
-          </button>
-          <input ref={inputRef} className="visually-hidden" type="file" accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={(event) => void upload(event.currentTarget.files?.[0])} />
+          <div><span className="eyebrow">{appConfig.demoMode ? "DEMO DOCUMENTS" : "YOUR DOCUMENTS"}</span><h1>What would you like to learn?</h1><p>{appConfig.demoMode ? "Open the sample document to explore the learning workspace." : "Choose a processed file to open it in your learning workspace."}</p></div>
+          {!appConfig.demoMode && <>
+            <button type="button" className="primary-button" onClick={() => inputRef.current?.click()} disabled={uploading}>
+              {uploading ? "Uploading…" : "Upload a file"}
+            </button>
+            <input ref={inputRef} className="visually-hidden" type="file" accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={(event) => void upload(event.currentTarget.files?.[0])} />
+          </>}
         </div>
+        {appConfig.demoMode && <p className="document-library-message">This demo uses sample data only. Uploads are disabled.</p>}
         {error && <p className="document-library-error" role="alert">{error}</p>}
         {loading ? <p className="document-library-message" role="status">Loading your documents…</p> : documents.length === 0 ? (
           <div className="session-chooser-empty"><b>Your library is empty</b><span>Upload a PDF or PowerPoint to start learning.</span></div>
@@ -120,8 +124,10 @@ export default function LearningDocumentChooser({ onOpenDocument, onBrowseLibrar
                   {item.status === "ready" && <span className="session-open-label">Open</span>}
                 </button>
                 {item.processingError && <p className="document-library-error">{item.processingError}</p>}
-                {item.status === "failed" && <button type="button" className="secondary-button" onClick={() => void retry(item)} disabled={retryingId === item.id}>{retryingId === item.id ? "Retrying…" : "Retry processing"}</button>}
-                <button type="button" className="secondary-button document-card-delete" onClick={() => void removeDocument(item)} disabled={deletingId === item.id}>{deletingId === item.id ? "Deleting…" : item.status === "deleting" ? "Retry deletion" : "Delete document"}</button>
+                {!appConfig.demoMode && <>
+                  {item.status === "failed" && <button type="button" className="secondary-button" onClick={() => void retry(item)} disabled={retryingId === item.id}>{retryingId === item.id ? "Retrying…" : "Retry processing"}</button>}
+                  <button type="button" className="secondary-button document-card-delete" onClick={() => void removeDocument(item)} disabled={deletingId === item.id}>{deletingId === item.id ? "Deleting…" : item.status === "deleting" ? "Retry deletion" : "Delete document"}</button>
+                </>}
               </article>
             ))}
           </div>

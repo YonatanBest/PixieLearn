@@ -20,6 +20,9 @@ vi.mock("./service", () => ({
   retryDocumentProcessing: vi.fn(),
   uploadDocument: vi.fn(),
 }))
+vi.mock("../../lib/config", () => ({
+  appConfig: { demoMode: false, showMockExamples: false },
+}))
 
 const lectureDocument: DocumentItem = {
   id: "document-1",

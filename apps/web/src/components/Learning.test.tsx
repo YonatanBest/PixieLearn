@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningDocument } from "../features/documents/service";
 import { Workspace } from "./Learning";
 
+vi.mock("../lib/config", () => ({
+  appConfig: { demoMode: false, showMockExamples: false },
+}));
+
 vi.mock("../features/documents/DocumentTextPreview", () => ({
   default: ({ documentId, pageIndex, zoom, onAskSelection }: {
     documentId: string

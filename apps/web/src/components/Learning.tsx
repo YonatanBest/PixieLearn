@@ -525,7 +525,9 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
       <section className="document-stage learning-real-document" style={{ "--paper-scale": zoom / 100 } as React.CSSProperties}>
         <div className="page-location"><span>Indexed page · Parsed word locations</span><small>Page {currentPage}</small></div>
         <Suspense fallback={<p className="document-library-message" role="status">Opening your document…</p>}>
-          <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} onAskSelection={(text, pageIndex) => setSelectionContext({ text, pageIndex })} />
+          {appConfig.demoMode
+            ? <DocumentPage page={currentPage} searchQuery={searchQuery} />
+            : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} onAskSelection={(text, pageIndex) => setSelectionContext({ text, pageIndex })} />}
         </Suspense>
         {captionsEnabled && <LiveCaptions transparency={captionTransparency} contrast={captionContrast} />}
       </section>
