@@ -34,6 +34,19 @@ describe("mock authentication service", () => {
     });
   });
 
+  it("persists a resized avatar in the current demo session", async () => {
+    await authService.login({
+      email: "alex@example.com",
+      password: "correct horse battery staple",
+      remember: true,
+    });
+
+    const updatedUser = await authService.updateAvatar("data:image/png;base64,avatar");
+
+    expect(updatedUser.avatarUrl).toBe("data:image/png;base64,avatar");
+    await expect(authService.getSession()).resolves.toEqual(updatedUser);
+  });
+
   it("clears the browser session when the user logs out", async () => {
     await authService.login({
       email: "alex@example.com",

@@ -58,6 +58,16 @@ class HttpAuthService implements AuthService {
     return mapUser(response.user);
   }
 
+  async updateAvatar(image: string | null) {
+    await apiRequest<unknown>("/auth/update-user", {
+      method: "POST",
+      body: { image },
+    });
+    const updatedUser = await this.getSession();
+    if (!updatedUser) throw new Error("Your session ended while updating your profile picture. Sign in and try again.");
+    return updatedUser;
+  }
+
   async loginWithGoogle() {
     const response = await apiRequest<{ url?: string; redirect?: boolean; user?: BetterAuthResponse["user"] }>("/auth/sign-in/social", {
       method: "POST",
@@ -104,6 +114,16 @@ class MockAuthService implements AuthService {
 
   async signup(credentials: SignupCredentials) {
     const user = { ...demoUser, name: credentials.name, email: credentials.email };
+    sessionStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(user));
+    return user;
+  }
+
+  async updateAvatar(image: string | null) {
+    const storedUser = await this.getSession();
+    if (!storedUser) throw new Error("Sign in before changing your profile picture.");
+    const user = { ...storedUser };
+    if (image) user.avatarUrl = image;
+    else delete user.avatarUrl;
     sessionStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(user));
     return user;
   }
