@@ -47,7 +47,6 @@ The project uses Tailwind CSS and semantic custom CSS together. Tailwind handles
 │       │   └── vite-env.d.ts
 │       ├── index.html
 │       └── vite.config.ts
-├── pixielearn_scrum_plan.md
 ├── package.json
 └── tsconfig.json
 ```
@@ -133,8 +132,6 @@ PixieLearn is being developed in stages:
 2. **PDF Teacher MVP** — connect document ingestion, source-grounded explanations, speech, and lesson state.
 3. **Electron companion beta** — add permissioned screen capture, always-on-top floating support, and global shortcuts.
 4. **Guided computer workflows** — expand toward screen-aware help while keeping permissions and user control explicit.
-
-See [pixielearn_scrum_plan.md](./pixielearn_scrum_plan.md) for the product requirements, architecture direction, and delivery backlog.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development conventions, validation steps, and pull request expectations.
 
