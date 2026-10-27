@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { AuthPage as PublicAuthPage, LandingPage as PublicLandingPage, PublicView as PublicRoute } from "../components/PublicPages";
-import { Sidebar, type View } from "../components/Sidebar";
+import { Sidebar, type AppMode, type View } from "../components/Sidebar";
 import { FloatingTutor } from "../components/Floating";
 import { Home, Workspace } from "../components/Learning";
+import WorkspaceCanvas from "../components/WorkspaceCanvas";
 import { SettingsView } from "../components/Settings";
 import { authService } from "../features/auth/service";
 import type { AuthUser } from "../features/auth/types";
@@ -30,6 +31,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [publicView, setPublicView] = useState<PublicView>("landing");
   const [view, setView] = useState<View>("home");
+  const [mode, setMode] = useState<AppMode>("learning");
   const [collapsed, setCollapsed] = useState(false);
   const [floating, setFloating] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -38,6 +40,7 @@ export default function App() {
   const [captionContrast, setCaptionContrast] = useState(100);
   const [learningDocument, setLearningDocument] = useState<LearningDocument | null>(null);
   const [recentDocuments, setRecentDocuments] = useState<RecentLearningDocument[]>([]);
+  const [availableDocuments, setAvailableDocuments] = useState<LearningDocument[]>([]);
   const [learningState, setLearningState] = useState<DocumentLearningState | null>(null);
   const [progressError, setProgressError] = useState("");
   const latestLearningState = useRef<DocumentLearningState | null>(null);
@@ -54,7 +57,18 @@ export default function App() {
     let active = true;
     Promise.all([listDocuments(), getLearningProgress()])
       .then(([documents, progress]) => {
-        if (active) setRecentDocuments(buildRecentLearningDocuments(documents, progress));
+        if (active) {
+          setRecentDocuments(buildRecentLearningDocuments(documents, progress));
+          setAvailableDocuments(documents.flatMap((document) =>
+            document.status === "ready" && document.pageCount !== null
+              ? [{
+              id: document.id,
+              filename: document.filename,
+              pageCount: document.pageCount,
+            }]
+              : [],
+          ));
+        }
       })
       .catch((reason: unknown) => {
         if (active) setProgressError(reason instanceof Error ? reason.message : "Recent documents could not be loaded.");
@@ -107,6 +121,7 @@ export default function App() {
       setCaptionTransparency(saved.workspaceState.captionTransparency);
       setCaptionContrast(saved.workspaceState.captionContrast);
       setLearningDocument(document);
+      setMode("learning");
       const recentDocument: RecentLearningDocument = {
         ...document,
         contentType: document.filename.toLowerCase().endsWith(".pptx")
@@ -211,11 +226,24 @@ export default function App() {
       });
     }
     setView(nextView);
+    if (nextView !== "canvas") setMode("learning");
+  };
+  const changeMode = (nextMode: AppMode) => {
+    if (view === "workspace" && nextMode !== mode && learningDocument && latestLearningState.current) {
+      checkpointWorkspace(learningDocument, {
+        pageIndex: latestLearningState.current.pageIndex,
+        zoom: latestLearningState.current.zoom,
+        workspaceState: latestLearningState.current.workspaceState,
+      });
+    }
+    setMode(nextMode);
+    setView(nextMode === "workspace" ? "canvas" : learningDocument ? "workspace" : "home");
   };
   return <div className="app-shell" data-theme={theme}>
-    <Sidebar user={authUser} onAvatarChange={async (image) => { setAuthUser(await authService.updateAvatar(image)); }} view={view} setView={changeView} collapsed={collapsed} setCollapsed={setCollapsed} theme={theme} toggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogout={async () => { if (learningDocument && latestLearningState.current) checkpointWorkspace(learningDocument, { pageIndex: latestLearningState.current.pageIndex, zoom: latestLearningState.current.zoom, workspaceState: latestLearningState.current.workspaceState }); await authService.logout(); setAuthUser(null); setPublicView("landing"); setFloating(false); setLearningDocument(null); latestLearningState.current = null; setLearningState(null); setRecentDocuments([]); }} recentDocuments={recentDocuments} activeDocumentId={learningDocument?.id ?? null} onOpenRecentDocument={(document) => void openDocument(document)} />
+    <Sidebar user={authUser} onAvatarChange={async (image) => { setAuthUser(await authService.updateAvatar(image)); }} view={view} setView={changeView} mode={mode} onModeChange={changeMode} collapsed={collapsed} setCollapsed={setCollapsed} theme={theme} toggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogout={async () => { if (learningDocument && latestLearningState.current) checkpointWorkspace(learningDocument, { pageIndex: latestLearningState.current.pageIndex, zoom: latestLearningState.current.zoom, workspaceState: latestLearningState.current.workspaceState }); await authService.logout(); setAuthUser(null); setPublicView("landing"); setFloating(false); setLearningDocument(null); latestLearningState.current = null; setLearningState(null); setRecentDocuments([]); setAvailableDocuments([]); setMode("learning"); }} recentDocuments={recentDocuments} activeDocumentId={learningDocument?.id ?? null} onOpenRecentDocument={(document) => void openDocument(document)} />
     {progressError && <div className="app-error-banner" role="alert">{progressError}</div>}
-    {view === "workspace" ? <Workspace openFloating={() => setFloating(true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} learningDocument={learningDocument} learningState={learningState} onWorkspaceChange={saveWorkspace} onWorkspaceCheckpoint={checkpointWorkspace} onOpenDocument={openDocument} /> : view === "home" ? <Home onOpenDocument={openDocument} /> : view === "learning" ? <MyLearning onOpenDocument={openDocument} onBrowseLibrary={() => changeView("home")} /> : <SettingsView />}
+    {view === "workspace" ? <Workspace openFloating={() => setFloating(true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} learningDocument={learningDocument} learningState={learningState} onWorkspaceChange={saveWorkspace} onWorkspaceCheckpoint={checkpointWorkspace} onOpenDocument={openDocument} /> : view === "home" ? <Home onOpenDocument={openDocument} /> : view === "learning" ? <MyLearning onOpenDocument={openDocument} onBrowseLibrary={() => changeView("home")} /> : view === "settings" ? <SettingsView /> : null}
+    <WorkspaceCanvas hidden={view !== "canvas"} ownerId={authUser.id} documents={availableDocuments} onOpenDocument={(document) => void openDocument(document)} />
     {floating && <FloatingTutor onOpen={() => { setFloating(false); setView("workspace"); }} onLessonPaused={() => saveFloatingWorkspace({ teacherState: "paused" }, true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} whiteboardOpen={learningState?.workspaceState.whiteboardOpen ?? false} onWhiteboardOpenChange={(open) => saveFloatingWorkspace({ whiteboardOpen: open }, !open)} whiteboardDrawing={learningState?.workspaceState.whiteboardDrawing ?? []} onWhiteboardDrawingChange={(whiteboardDrawing) => saveFloatingWorkspace({ whiteboardDrawing })} whiteboardDiagrams={learningState?.workspaceState.whiteboardDiagrams ?? []} onWhiteboardDiagramsChange={(whiteboardDiagrams) => saveFloatingWorkspace({ whiteboardDiagrams })} />}
   </div>;
 }

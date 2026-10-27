@@ -4,9 +4,11 @@ import type { AuthUser } from "../features/auth/types";
 import { createAvatarImage } from "../features/auth/avatar";
 import type { RecentLearningDocument } from "../features/documents/learningProgress";
 
-export type View = "workspace" | "home" | "learning" | "settings";
+export type View = "workspace" | "canvas" | "home" | "learning" | "settings";
 
-export function Sidebar({ user, onAvatarChange, view, setView, collapsed, setCollapsed, theme, toggleTheme, onLogout, recentDocuments, activeDocumentId, onOpenRecentDocument }: { user: AuthUser; onAvatarChange: (image: string | null) => Promise<void>; view: View; setView: (v: View) => void; collapsed: boolean; setCollapsed: (v: boolean) => void; theme: "dark" | "light"; toggleTheme: () => void; onLogout: () => void; recentDocuments: RecentLearningDocument[]; activeDocumentId: string | null; onOpenRecentDocument: (document: RecentLearningDocument) => void }) {
+export type AppMode = "learning" | "workspace";
+
+export function Sidebar({ user, onAvatarChange, view, setView, mode, onModeChange, collapsed, setCollapsed, theme, toggleTheme, onLogout, recentDocuments, activeDocumentId, onOpenRecentDocument }: { user: AuthUser; onAvatarChange: (image: string | null) => Promise<void>; view: View; setView: (v: View) => void; mode: AppMode; onModeChange: (mode: AppMode) => void; collapsed: boolean; setCollapsed: (v: boolean) => void; theme: "dark" | "light"; toggleTheme: () => void; onLogout: () => void; recentDocuments: RecentLearningDocument[]; activeDocumentId: string | null; onOpenRecentDocument: (document: RecentLearningDocument) => void }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [avatarError, setAvatarError] = useState("");
   const [avatarUploading, setAvatarUploading] = useState(false);
@@ -68,6 +70,14 @@ export function Sidebar({ user, onAvatarChange, view, setView, collapsed, setCol
           <strong>PixieLearn</strong>
           <IconButton icon="panel" label="Collapse sidebar" onClick={toggleSidebar} />
         </>}
+    </div>
+    <div className="mode-switch" role="group" aria-label="Choose workspace mode">
+      <button type="button" className={mode === "learning" ? "active" : ""} aria-pressed={mode === "learning"} onClick={() => onModeChange("learning")} title="Learning mode">
+        <Icon name="book" /><span>Learning</span>
+      </button>
+      <button type="button" className={mode === "workspace" ? "active" : ""} aria-pressed={mode === "workspace"} onClick={() => onModeChange("workspace")} title="Workspace mode">
+        <Icon name="board" /><span>Workspace</span>
+      </button>
     </div>
     <nav className="main-nav" aria-label="Main navigation">
       {items.map((item) => <button key={item.label} className={`nav-item ${item.value === view ? "active" : ""}`} onClick={() => item.value !== "notes" && setView(item.value)}>
