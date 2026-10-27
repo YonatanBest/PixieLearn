@@ -9,7 +9,7 @@ export const auth = betterAuth({
   baseURL: env.authUrl,
   secret: env.authSecret,
   database: pool,
-  trustedOrigins: [env.frontendUrl],
+  trustedOrigins: env.frontendOrigins,
   emailAndPassword: { enabled: true },
   ...(env.googleClientId && env.googleClientSecret
     ? {

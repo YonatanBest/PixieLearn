@@ -22,7 +22,9 @@ app.use((request, response, next) => {
 
 app.use(
   cors({
-    origin: env.frontendUrl,
+    origin: (origin, callback) => {
+      callback(null, !origin || env.frontendOrigins.includes(origin));
+    },
     credentials: true,
     methods: ["GET", "POST", "OPTIONS"],
     exposedHeaders: ["X-Request-ID"],
