@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, Index, Integer, String, Text, UniqueConstraint, Uuid
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -31,3 +32,20 @@ class DocumentRecord(Base):
     @property
     def has_rendition(self) -> bool:
         return self.rendition_storage_key is not None
+
+
+class DocumentPageRecord(Base):
+    __tablename__ = "document_pages"
+    __table_args__ = (UniqueConstraint("document_id", "page_index", name="uq_document_pages_document_page"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    page_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    page_width: Mapped[float] = mapped_column(nullable=False)
+    page_height: Mapped[float] = mapped_column(nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    spans: Mapped[list[dict]] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    used_ocr: Mapped[bool] = mapped_column(nullable=False, default=False)
+    extractor_version: Mapped[str] = mapped_column(String(32), nullable=False)

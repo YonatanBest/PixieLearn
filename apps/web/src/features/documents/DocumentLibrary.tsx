@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { ApiError } from "../../lib/api/client";
-import { getDocument, getDocumentRenditionUrl, listDocuments, retryDocumentRendition, uploadDocument, type DocumentItem } from "./service";
+import { getDocument, getDocumentRenditionUrl, listDocuments, retryDocumentProcessing, uploadDocument, type DocumentItem } from "./service";
 
 const errorText = (error: unknown) => error instanceof ApiError ? error.message : "Could not connect to the document service. Try again.";
 const sizeText = (bytes: number) => bytes < 1048576 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
@@ -62,7 +62,7 @@ export default function DocumentLibrary() {
     setError("");
     setRetrying(true);
     try {
-      const updated = await retryDocumentRendition(selected.id);
+      const updated = await retryDocumentProcessing(selected.id);
       setSelected(updated);
       setDocuments((items) => items.map((item) => item.id === updated.id ? updated : item));
     } catch (reason) { setError(errorText(reason)); }
@@ -92,12 +92,12 @@ export default function DocumentLibrary() {
       {documents.map((item) => <button key={item.id} type="button" className="document-card" onClick={() => void open(item)}><span className="document-card-icon"><Icon name="file" /></span><span className="document-card-copy"><b title={item.filename}>{item.filename}</b><small>{sizeText(item.sizeBytes)} · {new Date(item.createdAt).toLocaleDateString()}</small></span><span className={`document-status status-${item.status}`}>{item.status}</span><Icon name="chevron" /></button>)}
     </div>}
     {selected && <aside className="document-detail" aria-label="Document details"><div><span className="eyebrow">DOCUMENT DETAILS</span><h3>{selected.filename}</h3><p>{sizeText(selected.sizeBytes)} · Added {new Date(selected.createdAt).toLocaleString()}</p></div><span className={`document-status status-${selected.status}`}>{selected.status}</span><button type="button" className="icon-button" aria-label="Close document details" onClick={() => setSelected(null)}><Icon name="close" /></button><div className="document-detail-content">
-      {selected.status === "processing" && <p role="status">Converting your presentation to PDF…</p>}
+      {selected.status === "processing" && <p role="status">Processing document pages…</p>}
       {selected.processingError && <p className="document-library-error" role="alert">{selected.processingError}</p>}
       {selected.pageCount !== null && <p>{selected.pageCount} pages · Page numbers follow the original slide order.</p>}
-      {selected.status === "failed" && selected.contentType === "application/vnd.openxmlformats-officedocument.presentationml.presentation" && <button type="button" className="secondary-button" onClick={() => void retryRendition()} disabled={retrying}>{retrying ? "Retrying…" : "Retry conversion"}</button>}
+      {selected.status === "failed" && <button type="button" className="secondary-button" onClick={() => void retryRendition()} disabled={retrying}>{retrying ? "Retrying…" : "Retry processing"}</button>}
       {selected.hasRendition && <button type="button" className="secondary-button" onClick={() => void openRendition()}>Open PDF rendition</button>}
-      {selected.contentType === "application/pdf" && <p>Your PDF is stored securely and ready for the document viewer story.</p>}
+      {selected.contentType === "application/pdf" && selected.status === "ready" && <p>Your page text is ready for the document viewer.</p>}
     </div></aside>}
   </section>;
 }

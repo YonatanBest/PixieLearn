@@ -8,7 +8,7 @@ from app.config import Settings, get_settings
 
 
 class DocumentQueue(Protocol):
-    def enqueue_conversion(self, document_id: str) -> None: ...
+    def enqueue_processing(self, document_id: str) -> None: ...
 
 
 class QueueUnavailableError(Exception):
@@ -21,10 +21,10 @@ class RedisDocumentQueue:
         self.queue = Queue("documents", connection=self.connection)
         self.timeout_seconds = settings.document_conversion_timeout_seconds
 
-    def enqueue_conversion(self, document_id: str) -> None:
+    def enqueue_processing(self, document_id: str) -> None:
         try:
             self.queue.enqueue(
-                "app.worker.convert_pptx_to_pdf",
+                "app.worker.process_document",
                 document_id,
                 job_timeout=self.timeout_seconds,
                 result_ttl=3600,

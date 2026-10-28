@@ -59,6 +59,9 @@ services:
       OBJECT_STORAGE_CREATE_BUCKET_IF_MISSING: "true"
       DOCUMENT_CONVERSION_TIMEOUT_SECONDS: 900
       LIBREOFFICE_BINARY: libreoffice
+      TESSERACT_BINARY: tesseract
+      DOCUMENT_OCR_LANGUAGE: eng
+      DOCUMENT_OCR_DPI: 300
     depends_on:
       redis:
         condition: service_healthy
