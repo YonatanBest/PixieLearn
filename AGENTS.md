@@ -54,6 +54,12 @@ Export components as default exports.
 Component organization
 Keep new screens and reusable controls out of App.tsx when they have their own behavior or can be reused. Prefer focused files under apps/web/src/components or a feature folder. App.tsx should compose application state and top-level routes rather than contain every screen implementation.
 
+Commits
+- Use Conventional Commit messages in the format `<type>: <short description>`.
+- Choose a type that matches the change, such as `feat`, `fix`, `docs`, `test`, `refactor`, or `chore`.
+- Keep the description concise, specific, and imperative; do not end it with a period.
+- Examples: `feat: add document upload`, `fix: restore auth session`, `docs: clarify local setup`.
+
 Testing
 - Write tests for new behavior and bug fixes. Keep tests close to the package or feature they cover.
 - Make each test read as a small story: set up the inputs, perform one action, and assert the observable result.
