@@ -51,6 +51,8 @@ The project uses Tailwind CSS and semantic custom CSS together. Tailwind handles
 └── tsconfig.json
 ```
 
+The backend is split by responsibility: `services/auth` runs Better Auth on Node.js, and `services/api` runs product endpoints on FastAPI. Both services use the same local PostgreSQL database; Better Auth owns its auth tables, and the API validates sessions through Better Auth's session endpoint.
+
 The repository is organized as a web-first application. A future Electron companion can reuse the web interface while adding desktop capabilities such as always-on-top windows, screen capture, global shortcuts, and system-tray controls.
 
 ## Getting started
@@ -66,29 +68,51 @@ The repository is organized as a web-first application. A future Electron compan
 npm install
 ```
 
-### Configure the backend
+### Start the backend services
 
-Copy `.env.example` to `.env.local` and set the backend origin when the API is available:
+Copy each example environment file and create a Better Auth secret:
 
 ```bash
-VITE_API_URL=http://localhost:3000/api
-VITE_ENABLE_MOCK_AUTH=false
+cp .env.example .env.local
+cp services/auth/.env.example services/auth/.env
+cp services/api/.env.example services/api/.env
 ```
 
-The frontend currently exposes a typed auth boundary for Better Auth. The backend should mount Better Auth at `/api/auth` and expose these standard endpoints:
+Set the same `DATABASE_URL` in `services/auth/.env` and `services/api/.env` as needed. Replace `BETTER_AUTH_SECRET` with a private random value of at least 32 characters. Google sign-in is enabled when both Google credentials are set. Email/password auth and session restoration work without them.
 
-```text
-POST /api/auth/sign-in/email
-POST /api/auth/sign-up/email
-POST /api/auth/sign-in/social
-POST /api/auth/request-password-reset
-POST /api/auth/sign-out
-GET  /api/auth/get-session
+Start PostgreSQL and run Better Auth's schema migration:
+
+```bash
+docker compose up -d postgres
+cd services/auth
+npm install
+npm run db:migrate
 ```
 
-The frontend maps Better Auth's `{ user, session }` responses to the local `AuthUser` contract. Email/password and Google authentication should be configured in Better Auth on the backend. `GET /api/auth/get-session` should be used next to restore the session after a browser refresh.
+In separate terminals, start the services:
 
-Until `VITE_ENABLE_MOCK_AUTH=false` is set, the auth screens use a local demo service so the frontend remains runnable without a backend.
+```bash
+cd services/auth && npm run dev
+```
+
+```bash
+cd services/api
+python -m venv .venv
+# Activate the environment, then:
+pip install -e .
+uvicorn app.main:app --reload --port 8000
+```
+
+Set `VITE_ENABLE_MOCK_AUTH=false` in `.env.local` to use real auth. The Vite server proxies `/api/auth/*` to Better Auth on port `3001` and `/api/*` to FastAPI on port `8000`. Keep `VITE_API_URL=/api` for same-origin requests and cookies.
+
+FastAPI's `GET /api/me` forwards the incoming Better Auth session cookie to `GET /api/auth/get-session`; it does not read or write Better Auth tables. Missing or expired sessions return `401` with an `UNAUTHENTICATED` error code.
+
+The frontend restores the session at startup. With mock auth enabled, the demo session is stored in `sessionStorage` so refresh works for the current browser tab.
+
+### Frontend only
+
+The app remains usable without backend services. Copy `.env.example` to `.env.local`, leave `VITE_ENABLE_MOCK_AUTH=true`, and start the frontend:
+```
 
 ### Start the development server
 

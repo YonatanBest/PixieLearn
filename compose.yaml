@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pixielearn
+      POSTGRES_USER: pixielearn
+      POSTGRES_PASSWORD: pixielearn
+    ports:
+      - "5432:5432"
+    volumes:
+      - pixielearn-postgres:/var/lib/postgresql/data
+
+volumes:
+  pixielearn-postgres:
