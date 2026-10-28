@@ -15,6 +15,7 @@ import app.dependencies.auth as auth_dependency
 from app.config import Settings, get_settings
 from app.dependencies.auth import require_authenticated_user
 from app.dependencies.ownership import assert_resource_owner
+from app.document_queue import QueueUnavailableError, get_document_queue
 from app.database import Base, get_db
 from app.main import app
 from app.models import DocumentRecord
@@ -55,9 +56,23 @@ class MemoryDocumentStorage:
     def delete(self, key: str) -> None:
         self.objects.pop(key, None)
 
+    def download(self, key: str, destination) -> None:
+        destination.write(self.objects[key])
+
     def create_download_url(self, key: str, expires_in: int) -> str:
         self.download_requests.append((key, expires_in))
         return f"https://storage.example.test/{key}?expires={expires_in}"
+
+
+class MemoryDocumentQueue:
+    def __init__(self) -> None:
+        self.document_ids: list[str] = []
+        self.unavailable = False
+
+    def enqueue_conversion(self, document_id: str) -> None:
+        if self.unavailable:
+            raise QueueUnavailableError
+        self.document_ids.append(document_id)
 
 
 @pytest.fixture
@@ -71,6 +86,7 @@ def document_api(monkeypatch, request):
     Base.metadata.create_all(test_engine)
     test_sessions = sessionmaker(bind=test_engine, autoflush=False, autocommit=False)
     storage = MemoryDocumentStorage()
+    queue = MemoryDocumentQueue()
 
     def provide_test_session():
         with test_sessions() as session:
@@ -78,6 +94,7 @@ def document_api(monkeypatch, request):
 
     monkeypatch.setitem(app.dependency_overrides, get_db, provide_test_session)
     monkeypatch.setitem(app.dependency_overrides, get_document_storage, lambda: storage)
+    monkeypatch.setitem(app.dependency_overrides, get_document_queue, lambda: queue)
     monkeypatch.setitem(
         app.dependency_overrides,
         require_authenticated_user,
@@ -127,7 +144,118 @@ def test_authenticated_learner_uploads_a_structurally_valid_pptx(document_api) -
 
     assert response.status_code == 201
     assert response.json()["contentType"] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    assert response.json()["status"] == "uploaded"
+    assert response.json()["status"] == "processing"
+    queue = app.dependency_overrides[get_document_queue]()
+    assert queue.document_ids == [response.json()["id"]]
+
+
+def test_pptx_upload_shows_retryable_failure_when_redis_is_unavailable(document_api) -> None:
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    client, _storage, _sessions = document_api
+    queue = app.dependency_overrides[get_document_queue]()
+    queue.unavailable = True
+    presentation = BytesIO()
+    with ZipFile(presentation, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types />")
+        archive.writestr("ppt/presentation.xml", "<presentation />")
+
+    response = client.post(
+        "/api/documents",
+        files={"file": ("slides.pptx", presentation.getvalue(), "application/octet-stream")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["status"] == "failed"
+    assert response.json()["processingError"] == "PPTX conversion could not be queued. You can retry conversion."
+
+
+def test_owner_can_retry_a_failed_pptx_rendition(document_api) -> None:
+    client, _storage, sessions = document_api
+    queue = app.dependency_overrides[get_document_queue]()
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="slides.pptx",
+                content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                status="failed",
+                processing_error="PPTX conversion failed. You can retry conversion.",
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    response = client.post(f"/api/documents/{document_id}/retry-rendition")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processing"
+    assert response.json()["processingError"] is None
+    assert queue.document_ids == [str(document_id)]
+
+
+def test_rendition_download_url_requires_a_ready_owner_document(document_api) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="slides.pptx",
+                content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                rendition_storage_key=f"documents/{document_id}/rendition.pdf",
+                page_count=3,
+                status="ready",
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    response = client.get(f"/api/documents/{document_id}/rendition/download-url")
+
+    assert response.status_code == 200
+    assert response.json()["url"] == f"https://storage.example.test/documents/{document_id}/rendition.pdf?expires=300"
+    assert storage.download_requests == [(f"documents/{document_id}/rendition.pdf", 300)]
+
+
+def test_rendition_download_url_hides_another_owners_document(document_api, monkeypatch) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="slides.pptx",
+                content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                rendition_storage_key=f"documents/{document_id}/rendition.pdf",
+                page_count=3,
+                status="ready",
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        require_authenticated_user,
+        lambda: AuthUser(id="learner-2", name="Morgan Learner", email="morgan@example.com"),
+    )
+
+    response = client.get(f"/api/documents/{document_id}/rendition/download-url")
+
+    assert response.status_code == 404
+    assert response.json()["message"] == "Document not found."
+    assert storage.download_requests == []
 
 
 def test_upload_rejects_an_unsupported_file_type(document_api) -> None:

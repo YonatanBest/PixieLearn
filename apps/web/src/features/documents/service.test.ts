@@ -4,7 +4,7 @@ const { apiRequest } = vi.hoisted(() => ({ apiRequest: vi.fn() }));
 
 vi.mock("../../lib/api/client", () => ({ apiRequest }));
 
-import { getDocument, listDocuments, uploadDocument } from "./service";
+import { getDocument, getDocumentRenditionUrl, listDocuments, retryDocumentRendition, uploadDocument } from "./service";
 
 describe("document service", () => {
   beforeEach(() => {
@@ -19,6 +19,9 @@ describe("document service", () => {
       sizeBytes: 12,
       status: "uploaded" as const,
       createdAt: "2026-10-21T08:00:00Z",
+      pageCount: null,
+      hasRendition: false,
+      processingError: null,
     };
     apiRequest.mockResolvedValue(uploadedDocument);
     const file = new File(["%PDF-1.7"], "lecture.pdf", { type: "application/pdf" });
@@ -41,6 +44,18 @@ describe("document service", () => {
     expect(apiRequest.mock.calls.map(([path]) => path)).toEqual([
       "/documents",
       "/documents/document-1",
+    ]);
+  });
+
+  it("uses owner-scoped retry and rendition URL endpoints", async () => {
+    apiRequest.mockResolvedValue({});
+
+    await retryDocumentRendition("document-1");
+    await getDocumentRenditionUrl("document-1");
+
+    expect(apiRequest.mock.calls.map(([path, options]) => [path, options?.method])).toEqual([
+      ["/documents/document-1/retry-rendition", "POST"],
+      ["/documents/document-1/rendition/download-url", undefined],
     ]);
   });
 });

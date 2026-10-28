@@ -18,6 +18,9 @@ dependencies = [
   "psycopg[binary]>=3.2.0,<4.0.0",
   "boto3>=1.35.0,<2.0.0",
   "python-multipart>=0.0.20,<1.0.0",
+  "redis>=5.2.0,<7.0.0",
+  "rq>=2.1.0,<3.0.0",
+  "pypdf>=5.0.0,<7.0.0",
 ]
 
 [project.optional-dependencies]
@@ -30,3 +33,7 @@ package = false
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -2,7 +2,7 @@
 
 PixieLearn is a web-first AI learning workspace that turns PDF and document study into an interactive lesson. Pixie, the built-in AI tutor, helps learners understand what they are reading through explanations, visual highlights, quizzes, captions, and whiteboard diagrams.
 
-> **Current status:** PixieLearn includes Better Auth sign-in and a private PDF/PPTX document library backed by PostgreSQL and S3-compatible object storage. Document rendering, conversion, OCR, and AI lesson workflows are being added in later stories.
+> **Current status:** PixieLearn includes Better Auth sign-in and a private PDF/PPTX document library backed by PostgreSQL and S3-compatible object storage. PPTX files convert asynchronously to private PDF renditions; document viewing, OCR, and AI lesson workflows are being added in later stories.
 
 ## Highlights
 
@@ -82,10 +82,10 @@ cp services/api/.env.example services/api/.env
 
 Point `services/auth/.env` and `services/api/.env` at the same database host, name, and credentials. The API URL uses SQLAlchemy's `postgresql+psycopg://` scheme as shown in its example. Replace `BETTER_AUTH_SECRET` with a private random value of at least 32 characters. Google sign-in is enabled when both Google credentials are set. Email/password auth and session restoration work without them.
 
-Start PostgreSQL and MinIO, apply the Better Auth and product API schemas, then start the services:
+Start PostgreSQL, MinIO, Redis, and the LibreOffice document worker, apply the Better Auth and product API schemas, then start the services:
 
 ```bash
-docker compose up -d postgres minio minio-public
+docker compose up -d --build postgres minio minio-public redis document-worker
 cd services/auth
 npm install
 npm run db:migrate
@@ -112,7 +112,7 @@ Set `VITE_ENABLE_MOCK_AUTH=false` in `.env.local` to use real auth. The Vite ser
 
 FastAPI's `GET /api/me` forwards the incoming Better Auth session cookie to `GET /api/auth/get-session`; it does not read or write Better Auth tables. Missing or expired sessions return `401` with an `UNAUTHENTICATED` error code.
 
-The document API stores file metadata in PostgreSQL and originals in a private MinIO bucket. `services/api/.env.example` contains local database and storage settings. The API creates the development bucket on first upload. Signed URLs expire after five minutes. Local browser downloads use the MinIO proxy on port `9100` to add the frontend CORS headers; set `OBJECT_STORAGE_PUBLIC_ENDPOINT_URL` to the browser-accessible object-store or proxy address. Set `OBJECT_STORAGE_CREATE_BUCKET_IF_MISSING=false` in deployment and provision the bucket separately. Deployment buckets must allow `GET` from the configured frontend origin through S3 CORS. Future document and learning routes must keep database lookups scoped to both the resource ID and authenticated owner ID.
+The document API stores file metadata in PostgreSQL and originals and renditions in a private MinIO bucket. `services/api/.env.example` contains local database, Redis, and storage settings. The API creates the development bucket on first upload. PPTX conversion runs asynchronously in the Compose worker using headless LibreOffice; processing status, page count, and retry actions are available in the library. Signed URLs expire after five minutes. Local browser downloads use the MinIO proxy on port `9100` to add the frontend CORS headers; set `OBJECT_STORAGE_PUBLIC_ENDPOINT_URL` to the browser-accessible object-store or proxy address. Set `OBJECT_STORAGE_CREATE_BUCKET_IF_MISSING=false` in deployment and provision the bucket separately. Deployment buckets must allow `GET` from the configured frontend origin through S3 CORS. Future document and learning routes must keep database lookups scoped to both the resource ID and authenticated owner ID.
 
 Future document and learning routes must use the authenticated `AuthUser` and enforce resource ownership with the API ownership check. Query persisted resources by both their ID and owner ID, and return a generic `404` when the resource is missing or belongs to another user.
 
