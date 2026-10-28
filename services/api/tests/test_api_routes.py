@@ -1,14 +1,25 @@
 import httpx
 import logging
+from datetime import UTC, datetime
+from uuid import uuid4
+
+import pytest
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 import app.dependencies.auth as auth_dependency
 from app.config import Settings, get_settings
 from app.dependencies.auth import require_authenticated_user
 from app.dependencies.ownership import assert_resource_owner
+from app.database import Base, get_db
 from app.main import app
+from app.models import DocumentRecord
 from app.schemas.auth import AuthUser
+from app.storage import get_document_storage
 
 
 def create_document_test_app(document_owner_id: str) -> FastAPI:
@@ -31,6 +42,236 @@ def create_document_test_app(document_owner_id: str) -> FastAPI:
         return {"id": document["id"], "title": document["title"]}
 
     return test_app
+
+
+class MemoryDocumentStorage:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+        self.download_requests: list[tuple[str, int]] = []
+
+    def put(self, key: str, body, content_type: str) -> None:
+        self.objects[key] = body.read()
+
+    def delete(self, key: str) -> None:
+        self.objects.pop(key, None)
+
+    def create_download_url(self, key: str, expires_in: int) -> str:
+        self.download_requests.append((key, expires_in))
+        return f"https://storage.example.test/{key}?expires={expires_in}"
+
+
+@pytest.fixture
+def document_api(monkeypatch, request):
+    max_upload_size = getattr(request, "param", 104_857_600)
+    test_engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(test_engine)
+    test_sessions = sessionmaker(bind=test_engine, autoflush=False, autocommit=False)
+    storage = MemoryDocumentStorage()
+
+    def provide_test_session():
+        with test_sessions() as session:
+            yield session
+
+    monkeypatch.setitem(app.dependency_overrides, get_db, provide_test_session)
+    monkeypatch.setitem(app.dependency_overrides, get_document_storage, lambda: storage)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        require_authenticated_user,
+        lambda: AuthUser(id="learner-1", name="Riley Learner", email="riley@example.com"),
+    )
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_settings,
+        lambda: Settings(document_max_size_bytes=max_upload_size, object_storage_url_ttl_seconds=300),
+    )
+    with TestClient(app) as client:
+        yield client, storage, test_sessions
+    test_engine.dispose()
+
+
+def test_authenticated_learner_uploads_a_private_pdf(document_api) -> None:
+    client, storage, _sessions = document_api
+    private_notes = b"%PDF-1.7\nprivate notes\n%%EOF"
+
+    response = client.post(
+        "/api/documents",
+        files={"file": ("lecture.pdf", private_notes, "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["filename"] == "lecture.pdf"
+    assert response.json()["contentType"] == "application/pdf"
+    assert response.json()["sizeBytes"] == len(private_notes)
+    assert response.json()["status"] == "uploaded"
+    assert list(storage.objects.values()) == [private_notes]
+
+
+def test_authenticated_learner_uploads_a_structurally_valid_pptx(document_api) -> None:
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    client, _storage, _sessions = document_api
+    presentation = BytesIO()
+    with ZipFile(presentation, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types />")
+        archive.writestr("ppt/presentation.xml", "<presentation />")
+
+    response = client.post(
+        "/api/documents",
+        files={"file": ("slides.pptx", presentation.getvalue(), "application/octet-stream")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["contentType"] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    assert response.json()["status"] == "uploaded"
+
+
+def test_upload_rejects_an_unsupported_file_type(document_api) -> None:
+    client, storage, _sessions = document_api
+
+    response = client.post("/api/documents", files={"file": ("notes.txt", b"notes", "text/plain")})
+
+    assert response.status_code == 415
+    assert response.json()["message"] == "Only PDF and PPTX files are supported."
+    assert storage.objects == {}
+
+
+def test_upload_rejects_malformed_pdf_content(document_api) -> None:
+    client, storage, _sessions = document_api
+
+    response = client.post("/api/documents", files={"file": ("fake.pdf", b"%PDF-1.7\ntruncated", "application/pdf")})
+
+    assert response.status_code == 422
+    assert response.json()["message"] == "The selected file is not a valid PDF."
+    assert storage.objects == {}
+
+
+def test_upload_rejects_a_malformed_pptx_archive(document_api) -> None:
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    client, storage, _sessions = document_api
+    presentation = BytesIO()
+    with ZipFile(presentation, "w") as archive:
+        archive.writestr("[Content_Types].xml", "not XML")
+        archive.writestr("ppt/presentation.xml", "<presentation />")
+
+    response = client.post(
+        "/api/documents",
+        files={"file": ("broken.pptx", presentation.getvalue(), "application/octet-stream")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["message"] == "The selected file is not a valid PPTX presentation."
+    assert storage.objects == {}
+
+
+@pytest.mark.parametrize("document_api", [1024 * 1024], indirect=True)
+def test_upload_rejects_files_over_the_configured_limit(document_api) -> None:
+    client, storage, _sessions = document_api
+
+    response = client.post(
+        "/api/documents",
+        files={"file": ("large.pdf", b"%PDF-1.7" + b"x" * (1024 * 1024), "application/pdf")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["message"] == "Files must be 1 MiB or smaller."
+    assert storage.objects == {}
+
+
+def test_upload_removes_the_object_when_database_persistence_fails(document_api, monkeypatch) -> None:
+    client, storage, _sessions = document_api
+
+    def fail_commit(_session):
+        raise SQLAlchemyError("database unavailable")
+
+    monkeypatch.setattr(Session, "commit", fail_commit)
+    response = client.post(
+        "/api/documents",
+        files={"file": ("lecture.pdf", b"%PDF-1.7\nprivate notes\n%%EOF", "application/pdf")},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["message"] == "Could not save the document record."
+    assert storage.objects == {}
+
+
+def test_document_listing_returns_only_the_authenticated_owners_files(document_api) -> None:
+    client, _storage, sessions = document_api
+    with sessions() as session:
+        session.add_all([
+            DocumentRecord(
+                id=uuid4(), owner_id="learner-1", filename="my.pdf", content_type="application/pdf",
+                size_bytes=10, storage_key="documents/one/original", status="uploaded", created_at=datetime.now(UTC),
+            ),
+            DocumentRecord(
+                id=uuid4(), owner_id="learner-2", filename="private.pdf", content_type="application/pdf",
+                size_bytes=10, storage_key="documents/two/original", status="uploaded", created_at=datetime.now(UTC),
+            ),
+        ])
+        session.commit()
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 200
+    assert [document["filename"] for document in response.json()] == ["my.pdf"]
+
+
+def test_document_details_and_download_urls_are_owner_only(document_api, monkeypatch) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    storage_key = f"documents/{document_id}/original"
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="my.pdf",
+                content_type="application/pdf",
+                size_bytes=10,
+                storage_key=storage_key,
+                status="uploaded",
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    detail_response = client.get(f"/api/documents/{document_id}")
+    download_response = client.get(f"/api/documents/{document_id}/download-url")
+
+    assert detail_response.status_code == 200
+    assert detail_response.json()["filename"] == "my.pdf"
+    assert download_response.status_code == 200
+    assert download_response.json()["url"] == f"https://storage.example.test/{storage_key}?expires=300"
+    assert storage.download_requests == [(storage_key, 300)]
+
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        require_authenticated_user,
+        lambda: AuthUser(id="learner-2", name="Sam Student", email="sam@example.com"),
+    )
+    other_user_response = client.get(f"/api/documents/{document_id}")
+    other_user_download_response = client.get(f"/api/documents/{document_id}/download-url")
+
+    assert other_user_response.status_code == 404
+    assert other_user_response.json()["message"] == "Document not found."
+    assert other_user_download_response.status_code == 404
+    assert storage.download_requests == [(storage_key, 300)]
+
+
+def test_document_routes_reject_unauthenticated_requests(document_api, monkeypatch) -> None:
+    client, _storage, _sessions = document_api
+    monkeypatch.delitem(app.dependency_overrides, require_authenticated_user)
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
 
 
 def test_health_endpoint_reports_ready() -> None:
