@@ -1,0 +1,188 @@
+import httpx
+from fastapi.testclient import TestClient
+
+import app.dependencies.auth as auth_dependency
+from app.config import Settings, get_settings
+from app.main import app
+
+
+def test_health_endpoint_reports_ready() -> None:
+    response = TestClient(app).get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_me_requires_a_session_cookie() -> None:
+    response = TestClient(app).get("/api/me")
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "message": "Authentication required.",
+        "code": "UNAUTHENTICATED",
+    }
+
+
+def test_me_forwards_the_session_cookie_to_better_auth(monkeypatch) -> None:
+    calls: list[tuple[str, dict[str, str]]] = []
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_settings,
+        lambda: Settings(
+            better_auth_base_url="http://localhost:3001",
+            better_auth_cookie_name="better-auth.session_token",
+        ),
+    )
+
+    class FakeAuthClient:
+        def __init__(self, *, timeout: float) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url: str, headers: dict[str, str]):
+            calls.append((url, headers))
+            return httpx.Response(
+                200,
+                json={
+                    "user": {
+                        "id": "user-42",
+                        "name": "Riley Learner",
+                        "email": "riley@example.com",
+                        "image": "https://example.com/avatar.png",
+                    },
+                    "session": {"id": "session-7"},
+                },
+            )
+
+    monkeypatch.setattr(auth_dependency.httpx, "AsyncClient", FakeAuthClient)
+
+    client = TestClient(app)
+    client.cookies.set("better-auth.session_token", "session-cookie-value")
+    response = client.get("/api/me")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "user-42",
+        "name": "Riley Learner",
+        "email": "riley@example.com",
+        "avatarUrl": "https://example.com/avatar.png",
+    }
+    assert calls == [
+        (
+            "http://localhost:3001/api/auth/get-session",
+            {"Cookie": "better-auth.session_token=session-cookie-value"},
+        )
+    ]
+
+
+def test_me_accepts_a_secure_better_auth_cookie(monkeypatch) -> None:
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_settings,
+        lambda: Settings(
+            better_auth_base_url="http://localhost:3001",
+            better_auth_cookie_name="better-auth.session_token",
+        ),
+    )
+
+    class FakeAuthClient:
+        def __init__(self, *, timeout: float) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _url: str, headers: dict[str, str]):
+            assert headers == {"Cookie": "__Secure-better-auth.session_token=secure-value"}
+            return httpx.Response(
+                200,
+                json={"user": {"id": "secure-user", "name": "Sam", "email": "sam@example.com"}},
+            )
+
+    monkeypatch.setattr(auth_dependency.httpx, "AsyncClient", FakeAuthClient)
+
+    client = TestClient(app)
+    client.cookies.set("__Secure-better-auth.session_token", "secure-value")
+    response = client.get("/api/me")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "secure-user"
+
+
+def test_me_rejects_an_expired_session(monkeypatch) -> None:
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_settings,
+        lambda: Settings(
+            better_auth_base_url="http://localhost:3001",
+            better_auth_cookie_name="better-auth.session_token",
+        ),
+    )
+
+    class FakeAuthClient:
+        def __init__(self, *, timeout: float) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _url: str, headers: dict[str, str]):
+            assert headers == {"Cookie": "better-auth.session_token=expired-value"}
+            return httpx.Response(401, json=None)
+
+    monkeypatch.setattr(auth_dependency.httpx, "AsyncClient", FakeAuthClient)
+
+    client = TestClient(app)
+    client.cookies.set("better-auth.session_token", "expired-value")
+    response = client.get("/api/me")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+def test_me_reports_auth_provider_outages_as_service_unavailable(monkeypatch) -> None:
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_settings,
+        lambda: Settings(
+            better_auth_base_url="http://localhost:3001",
+            better_auth_cookie_name="better-auth.session_token",
+        ),
+    )
+
+    class FakeAuthClient:
+        def __init__(self, *, timeout: float) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, _url: str, headers: dict[str, str]):
+            assert headers == {"Cookie": "better-auth.session_token=valid-looking-cookie"}
+            return httpx.Response(503)
+
+    monkeypatch.setattr(auth_dependency.httpx, "AsyncClient", FakeAuthClient)
+
+    client = TestClient(app)
+    client.cookies.set("better-auth.session_token", "valid-looking-cookie")
+    response = client.get("/api/me")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "message": "Auth provider is unavailable.",
+        "code": "REQUEST_FAILED",
+    }

@@ -21,6 +21,11 @@ apps/web/src/index.css - Global CSS entrypoint and Tailwind CSS v4 import
 apps/web/index.html - Vite HTML shell containing the #root element and loading src/main.tsx
 package.json - Project dependencies and the Vite build, development, preview, and formatting scripts
 apps/web/vite.config.ts - Standard Vite configuration with React, Tailwind CSS v4, and the @ alias for apps/web/src
+vitest.config.ts - Frontend unit-test configuration
+apps/web/src/features/auth/service.test.ts - Frontend auth session tests
+apps/web/src/lib/api/client.test.ts - Shared API client tests
+services/api/tests/ - FastAPI route and authentication-boundary tests
+services/auth/test/ - Better Auth service tests
 .mise.toml - Toolchain versions for Node.js and pnpm
 Dependencies
 Runtime: React 19 and React DOM 19
@@ -48,3 +53,15 @@ Export components as default exports.
 
 Component organization
 Keep new screens and reusable controls out of App.tsx when they have their own behavior or can be reused. Prefer focused files under apps/web/src/components or a feature folder. App.tsx should compose application state and top-level routes rather than contain every screen implementation.
+
+Testing
+- Write tests for new behavior and bug fixes. Keep tests close to the package or feature they cover.
+- Make each test read as a small story: set up the inputs, perform one action, and assert the observable result.
+- Prefer repeating short, clear setup in each test over sharing mutable objects, fixtures, or state between tests. Every test should own the objects it changes.
+- Avoid opaque helper layers and large test factories. Use a helper only when it removes meaningful complexity without hiding the behavior under test.
+- Use concrete names and values. Make important inputs and expected outputs visible in the test itself.
+- Keep each test focused on one behavior; split unrelated assertions into separate tests.
+- Do not depend on test execution order. Reset mocks, environment values, storage, and app state between tests.
+- Test public behavior at the boundary first. Mock external services, not the code path whose behavior the test is meant to verify.
+- Keep tests deterministic: no real network calls, real credentials, or required external services unless the test is explicitly marked as an integration test.
+- Run the relevant package tests and the repository test command before completing a change.

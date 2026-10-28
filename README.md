@@ -53,6 +53,8 @@ The project uses Tailwind CSS and semantic custom CSS together. Tailwind handles
 
 The backend is split by responsibility: `services/auth` runs Better Auth on Node.js, and `services/api` runs product endpoints on FastAPI. Both services use the same local PostgreSQL database; Better Auth owns its auth tables, and the API validates sessions through Better Auth's session endpoint.
 
+Tests live beside their code: frontend tests are under `apps/web/src`, FastAPI tests are under `services/api/tests`, and Better Auth service tests are under `services/auth/test`.
+
 The repository is organized as a web-first application. A future Electron companion can reuse the web interface while adding desktop capabilities such as always-on-top windows, screen capture, global shortcuts, and system-tray controls.
 
 ## Getting started
@@ -139,6 +141,17 @@ npm run preview
 ```bash
 npm run format
 ```
+
+### Run tests
+
+Install the API development dependencies once, then run the repository test command:
+
+```bash
+python -m pip install -e "services/api[dev]"
+npm test
+```
+
+`npm test` runs the frontend unit tests, FastAPI tests, and Better Auth service tests. The Better Auth unit tests validate configuration without requiring PostgreSQL. End-to-end auth tests that need PostgreSQL should be run separately with the local services configured.
 
 ## Validation
 
