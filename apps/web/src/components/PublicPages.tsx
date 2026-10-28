@@ -2,8 +2,16 @@ import { FormEvent, useState } from "react";
 import { Icon } from "./Icon";
 import { authService } from "../features/auth/service";
 import type { AuthUser } from "../features/auth/types";
+import { ApiError } from "../lib/api/client";
 
 export type PublicView = "landing" | "features" | "how-it-works" | "faq" | "login" | "signup";
+
+function readableRequestError(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) {
+    return error.requestId ? `${error.message} (Request ID: ${error.requestId})` : error.message;
+  }
+  return error instanceof Error ? error.message : fallback;
+}
 
 export function AuthPage({ mode, onModeChange, onAuthenticated }: { mode: "login" | "signup"; onModeChange: (mode: "login" | "signup") => void; onAuthenticated: (user: AuthUser) => void }) {
   const [showPassword, setShowPassword] = useState(false);
@@ -28,7 +36,7 @@ export function AuthPage({ mode, onModeChange, onAuthenticated }: { mode: "login
         : await authService.signup({ name, email, password });
       onAuthenticated(user);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Authentication failed. Please try again.");
+      setError(readableRequestError(requestError, "Authentication failed. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -40,7 +48,7 @@ export function AuthPage({ mode, onModeChange, onAuthenticated }: { mode: "login
       const user = await authService.loginWithGoogle();
       if (user) onAuthenticated(user);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Google authentication failed. Please try again.");
+      setError(readableRequestError(requestError, "Google authentication failed. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -59,7 +67,7 @@ export function AuthPage({ mode, onModeChange, onAuthenticated }: { mode: "login
       await authService.requestPasswordReset(email.trim());
       setStatus("If an account exists for this email, reset instructions are on their way.");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "We could not request a password reset.");
+      setError(readableRequestError(requestError, "We could not request a password reset. Please try again."));
     } finally {
       setLoading(false);
     }

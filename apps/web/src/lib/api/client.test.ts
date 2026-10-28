@@ -41,7 +41,7 @@ describe("apiRequest", () => {
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ message: "Authentication required.", code: "UNAUTHENTICATED" }), {
           status: 401,
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-Request-ID": "request-abc" },
         }),
       ),
     );
@@ -51,6 +51,7 @@ describe("apiRequest", () => {
       message: "Authentication required.",
       status: 401,
       code: "UNAUTHENTICATED",
+      requestId: "request-abc",
     } satisfies Partial<ApiError>);
   });
 
@@ -59,8 +60,27 @@ describe("apiRequest", () => {
 
     await expect(apiRequest("/health")).rejects.toMatchObject({
       name: "ApiError",
-      message: "The request could not be completed.",
+      message: "The request could not be completed. Please try again.",
       status: 503,
     });
+  });
+
+  it("turns network failures into a retryable API error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+
+    await expect(apiRequest("/health")).rejects.toMatchObject({
+      name: "ApiError",
+      message: "PixieLearn could not reach the service. Check your connection and try again.",
+      status: 0,
+      code: "NETWORK_ERROR",
+    });
+  });
+
+  it("keeps request cancellations distinguishable from network failures", async () => {
+    const abortError = new Error("Request aborted");
+    abortError.name = "AbortError";
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(abortError));
+
+    await expect(apiRequest("/health")).rejects.toBe(abortError);
   });
 });
