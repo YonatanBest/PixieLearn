@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, lazy, Suspense, useEffect, useRef, useState } fro
 import { Icon, IconButton, MuteButton, type IconName } from "./Icon";
 import DocumentLibrary from "../features/documents/DocumentLibrary";
 import type { LearningDocument } from "../features/documents/service";
+import { getDocumentPageText } from "../features/documents/service";
 import { appConfig } from "../lib/config";
 import type {
   DocumentLearningState,
@@ -17,8 +18,8 @@ const MermaidFigure = lazy(() => import("../features/documents/MermaidFigure"));
 
 export type TeacherState = "teaching" | "quiz" | "feedback" | "question" | "paused" | "complete";
 
-export function LiveCaptions({ transparency, contrast }: { transparency: number; contrast: number }) {
-  return <div className="live-captions" style={{ backgroundColor: `rgba(0, 0, 0, ${(100 - transparency) / 100 * .86})`, filter: `contrast(${contrast}%)` }}>
+export function LiveCaptions({ transparency, contrast, textSize = "Medium", position = "Bottom center" }: { transparency: number; contrast: number; textSize?: "Small" | "Medium" | "Large"; position?: "Bottom center" | "Center" }) {
+  return <div className={`live-captions caption-size-${textSize.toLowerCase()} caption-position-${position === "Center" ? "center" : "bottom"}`} style={{ backgroundColor: `rgba(0, 0, 0, ${(100 - transparency) / 100 * .86})`, filter: `contrast(${contrast}%)` }}>
     <p>The scaling term keeps the dot products in a useful range, so softmax does not become overly confident.</p>
   </div>;
 }
@@ -263,13 +264,18 @@ export function QuizModal({ state, setState, onClose }: { state: TeacherState; s
   </div>;
 }
 
-export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, onTranscriptChange }: {
+export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, onTranscriptChange, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate", teachingStyle = "Step-by-step" }: {
   state: TeacherState
   setState: (s: TeacherState) => void
   onResizeStart: () => void
   selectionContext: { text: string; pageIndex: number } | null
   transcript: TranscriptMessage[]
   onTranscriptChange: (messages: TranscriptMessage[]) => void
+  autoPlayExplanations?: boolean
+  speakingSpeed?: "0.8x" | "1.0x" | "1.2x" | "1.5x"
+  voice?: "Pixie · Calm" | "Pixie · Bright"
+  learningLevel?: "Beginner" | "Intermediate" | "Advanced"
+  teachingStyle?: "Simple and intuitive" | "Step-by-step" | "Technical and detailed"
 }) {
   const [input, setInput] = useState("");
   const [muted, setMuted] = useState(false);
@@ -279,16 +285,42 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
       setInput(`Explain this passage from page ${selectionContext.pageIndex + 1}: "${selectionContext.text}"`);
     }
   }, [selectionContext]);
+  useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    if (!autoPlayExplanations || state !== "teaching") return;
+    const utterance = new SpeechSynthesisUtterance(
+      learningLevel === "Beginner"
+        ? "Think of the query as a question and each key as a label. Scaling keeps the scores balanced so the model can compare them fairly."
+        : learningLevel === "Advanced"
+          ? "Dividing query-key dot products by the square root of the key dimension stabilizes their variance, preventing softmax saturation and preserving useful gradients."
+          : "The query and key vectors determine how strongly tokens relate. Dividing by the square root of the key dimension keeps softmax from becoming overly confident.",
+    );
+    utterance.rate = Number(speakingSpeed.slice(0, -1));
+    utterance.pitch = voice === "Pixie · Bright" ? 1.15 : 0.9;
+    window.speechSynthesis.speak(utterance);
+    return () => window.speechSynthesis.cancel();
+  }, [autoPlayExplanations, learningLevel, speakingSpeed, state, voice]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const question = input.trim();
     if (!question) return;
+    const explanation = learningLevel === "Beginner"
+      ? "Think of the query as a question and each key as a label. Scaling keeps the scores balanced so the model can compare them fairly."
+      : learningLevel === "Advanced"
+        ? "Dividing query-key dot products by the square root of the key dimension stabilizes their variance, preventing softmax saturation and preserving useful gradients."
+        : "As the key dimension grows, dot products spread farther apart, pushing softmax toward near-zero or near-one outputs. The scaling term keeps those values in a useful range.";
+    const formattedExplanation = teachingStyle === "Step-by-step"
+      ? `Step 1: Compare the query with each key. Step 2: Scale the scores by the square root of the key dimension. Step 3: Apply softmax to get balanced attention weights. ${explanation}`
+      : teachingStyle === "Simple and intuitive"
+        ? `In simple terms: ${explanation}`
+        : explanation;
     onTranscriptChange([
       ...transcript,
       { role: "user", text: question, pageIndex: selectionContext?.pageIndex ?? null },
       {
         role: "assistant",
-        text: "As the key dimension grows, the dot product sums more terms. Its values spread farther apart, pushing softmax toward near-zero or near-one outputs. The scaling term brings those values back into a useful range, preserving uncertainty where the model still needs to learn.",
+        text: formattedExplanation,
         pageIndex: selectionContext?.pageIndex ?? null,
       },
     ]);
@@ -334,21 +366,23 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
   </aside>;
 }
 
-export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, captionTransparency, setCaptionTransparency, captionContrast, setCaptionContrast, learningDocument, learningState, onWorkspaceChange, onWorkspaceCheckpoint, onOpenDocument }: { openFloating: () => void; captionsEnabled: boolean; setCaptionsEnabled: (enabled: boolean) => void; captionTransparency: number; setCaptionTransparency: (value: number) => void; captionContrast: number; setCaptionContrast: (value: number) => void; learningDocument?: LearningDocument | null; learningState?: DocumentLearningState | null; onWorkspaceChange: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onWorkspaceCheckpoint: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onOpenDocument: (document: LearningDocument) => void }) {
+export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, captionTransparency, setCaptionTransparency, captionContrast, setCaptionContrast, learningDocument, learningState, onWorkspaceChange, onWorkspaceCheckpoint, onOpenDocument, captionTextSize = "Medium", captionPosition = "Bottom center", defaultDocumentZoom = "Fit to width", searchScope = "Entire document", rememberLastPage = true, autoPlayExplanations = true, continueAutomatically = true, learningLevel = "Intermediate", teachingStyle = "Step-by-step", speakingSpeed = "1.0x", voice = "Pixie · Calm" }: { openFloating: () => void; captionsEnabled: boolean; setCaptionsEnabled: (enabled: boolean) => void; captionTransparency: number; setCaptionTransparency: (value: number) => void; captionContrast: number; setCaptionContrast: (value: number) => void; learningDocument?: LearningDocument | null; learningState?: DocumentLearningState | null; onWorkspaceChange: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onWorkspaceCheckpoint: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onOpenDocument: (document: LearningDocument) => void; captionTextSize?: "Small" | "Medium" | "Large"; captionPosition?: "Bottom center" | "Center"; defaultDocumentZoom?: "Fit to width" | "100%" | "120%"; searchScope?: "Current page" | "Entire document"; rememberLastPage?: boolean; autoPlayExplanations?: boolean; continueAutomatically?: boolean; learningLevel?: "Beginner" | "Intermediate" | "Advanced"; teachingStyle?: "Simple and intuitive" | "Step-by-step" | "Technical and detailed"; speakingSpeed?: "0.8x" | "1.0x" | "1.2x" | "1.5x"; voice?: "Pixie · Calm" | "Pixie · Bright" }) {
   const [teacherState, setTeacherState] = useState<TeacherState>("teaching");
   const [boardOpen, setBoardOpen] = useState(false);
   const [whiteboardDrawing, setWhiteboardDrawing] = useState<WhiteboardStroke[]>([]);
   const [whiteboardDiagrams, setWhiteboardDiagrams] = useState<WhiteboardDiagram[]>([]);
-  const [zoom, setZoom] = useState(84);
+  const defaultZoom = defaultDocumentZoom === "100%" ? 100 : defaultDocumentZoom === "120%" ? 120 : 84;
+  const [zoom, setZoom] = useState(defaultZoom);
   const [currentPage, setCurrentPage] = useState(1);
   const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
   const [teacherWidth, setTeacherWidth] = useState(350);
   const [captionControlsVisible, setCaptionControlsVisible] = useState(false);
   const captionControlsTimer = useRef<number | undefined>(undefined);
-  const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchIndex, setSearchIndex] = useState(0);
-  const [searchScope, setSearchScope] = useState<"page" | "document">("document");
+  const [searchResults, setSearchResults] = useState<number[]>([]);
+  const [searchResultIndex, setSearchResultIndex] = useState(0);
+  const [searchStatus, setSearchStatus] = useState("");
+  const pageCount = learningDocument?.pageCount ?? 0;
   const [selectionContext, setSelectionContext] = useState<{ text: string; pageIndex: number } | null>(null);
   const resizing = useRef(false);
   const restoringState = useRef(false);
@@ -375,20 +409,6 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   }, []);
   const estimatedMinutes = Math.max(0, Math.round((15 - currentPage) * 0.7));
   const pageProgress = (currentPage / 15) * 100;
-  const documentSearchText: Record<number, string> = {
-    3: "scaled dot-product attention query keys values softmax divide sqrt dimension matrix",
-    4: "multi-head attention positional encoding embeddings model architecture",
-    6: "additive attention dot product vectors dimensions variance gradients",
-  };
-  const normalizedQuery = searchQuery.trim().toLowerCase();
-  const pagesToSearch = searchScope === "page" ? [currentPage] : Object.keys(documentSearchText).map(Number);
-  const searchOccurrences = normalizedQuery ? pagesToSearch.flatMap((page) => {
-    const text = documentSearchText[page] ?? "";
-    const matches = text.match(new RegExp(normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi")) ?? [];
-    return matches.map((_, occurrence) => ({ page, occurrence }));
-  }) : [];
-  const searchResults = [...new Set(searchOccurrences.map(({ page }) => page))];
-  const activeSearchPage = searchOccurrences[searchIndex]?.page ?? currentPage;
   const showCaptionControls = () => {
     window.clearTimeout(captionControlsTimer.current);
     captionControlsTimer.current = window.setTimeout(() => setCaptionControlsVisible(true), 550);
@@ -425,20 +445,63 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
       checkpoint({ teacherState: nextState });
     }
   };
+  useEffect(() => {
+    if (!continueAutomatically || teacherState !== "complete") return;
+    const lastPage = learningDocument?.pageCount ?? 0;
+    const timer = window.setTimeout(() => {
+      if (currentPage < lastPage) setCurrentPage(currentPage + 1);
+      setTeacherState("teaching");
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [continueAutomatically, currentPage, learningDocument?.pageCount, teacherState]);
+  const runDocumentSearch = async (event: FormEvent) => {
+    event.preventDefault();
+    const query = searchQuery.trim();
+    if (!learningDocument || !query) {
+      setSearchResults([]);
+      setSearchStatus(query ? "Open a document before searching." : "Enter a word or phrase to search.");
+      return;
+    }
+    setSearchStatus("Searching…");
+    try {
+      const pages = searchScope === "Current page"
+        ? [currentPage - 1]
+        : Array.from({ length: pageCount }, (_, index) => index);
+      const matchingPages: number[] = [];
+      for (let start = 0; start < pages.length; start += 8) {
+        const batch = await Promise.all(pages.slice(start, start + 8).map((page) =>
+          getDocumentPageText(learningDocument.id, page),
+        ));
+        batch.forEach((result) => {
+          if (result.text.toLocaleLowerCase().includes(query.toLocaleLowerCase())) matchingPages.push(result.pageIndex);
+        });
+      }
+      setSearchResults(matchingPages);
+      setSearchResultIndex(0);
+      if (matchingPages.length) {
+        setCurrentPage(matchingPages[0] + 1);
+        setSearchStatus(`${matchingPages.length} matching page${matchingPages.length === 1 ? "" : "s"}`);
+      } else {
+        setSearchStatus("No matches found.");
+      }
+    } catch (reason) {
+      setSearchStatus(reason instanceof Error ? reason.message : "The document could not be searched.");
+    }
+  };
   const moveSearch = (direction: number) => {
-    if (!searchOccurrences.length) return;
-    const nextIndex = (searchIndex + direction + searchOccurrences.length) % searchOccurrences.length;
-    setSearchIndex(nextIndex);
+    if (!searchResults.length) return;
+    const nextIndex = (searchResultIndex + direction + searchResults.length) % searchResults.length;
+    setSearchResultIndex(nextIndex);
     setSelectionContext(null);
-    setCurrentPage(searchOccurrences[nextIndex].page);
+    setCurrentPage(searchResults[nextIndex] + 1);
   };
   useEffect(() => {
     if (!learningDocument) return;
     restoringState.current = true;
     const saved = learningState?.documentId === learningDocument.id ? learningState : null;
     const initialWorkspaceState = createInitialWorkspaceState(appConfig.showMockExamples);
-    setCurrentPage(saved ? saved.pageIndex + 1 : 1);
-    setZoom(saved?.zoom ?? 84);
+    setCurrentPage(saved && rememberLastPage ? saved.pageIndex + 1 : 1);
+    setZoom(saved?.zoom ?? defaultZoom);
     const workspace = saved?.workspaceState;
     setTeacherState(workspace?.teacherState ?? "teaching");
     setSelectionContext(workspace?.selectionContext ?? null);
@@ -456,8 +519,8 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     setCaptionTransparency(workspace?.captionTransparency ?? 18);
     setCaptionContrast(workspace?.captionContrast ?? 100);
     const restored = {
-      pageIndex: saved?.pageIndex ?? 0,
-      zoom: saved?.zoom ?? 84,
+      pageIndex: saved && rememberLastPage ? saved.pageIndex : 0,
+      zoom: saved?.zoom ?? defaultZoom,
       workspaceState: {
         ...(workspace ?? initialWorkspaceState),
         whiteboardDiagrams: workspace?.whiteboardDiagrams?.length
@@ -502,7 +565,6 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     onWorkspaceChangeRef.current(learningDocument, next);
   }, [learningDocument?.id, currentPage, zoom, teacherState, selectionContext, transcript, boardOpen, whiteboardDrawing, whiteboardDiagrams, captionsEnabled, captionTransparency, captionContrast]);
   if (!learningDocument) return null;
-  const pageCount = learningDocument.pageCount;
   const setDocumentPage = (page: number) => {
     setSelectionContext(null);
     setCurrentPage(Math.min(pageCount, Math.max(1, page)));
@@ -515,22 +577,28 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
         <span className="tool-divider"></span>
         <IconButton icon="minus" label="Zoom out" onClick={() => setZoom(Math.max(68, zoom - 8))} />
         <span className="zoom-value">{zoom}%</span>
-        <IconButton icon="plus" label="Zoom in" onClick={() => setZoom(Math.min(116, zoom + 8))} />
+        <IconButton icon="plus" label="Zoom in" onClick={() => setZoom(Math.min(120, zoom + 8))} />
         <IconButton icon="fit" label="Fit to width" onClick={() => setZoom(84)} />
       </div>
+      <form className="document-search-form" role="search" onSubmit={(event) => void runDocumentSearch(event)}>
+        <input aria-label="Search in document" value={searchQuery} onChange={(event) => setSearchQuery(event.currentTarget.value)} placeholder={searchScope === "Current page" ? "Search this page" : "Search document"} />
+        <button type="submit">Search</button>
+        {searchResults.length > 0 && <span className="document-search-results">{searchResultIndex + 1}/{searchResults.length}<button type="button" aria-label="Next search result" onClick={() => moveSearch(1)}>Next</button></span>}
+        {searchStatus && <span className="document-search-status" role="status">{searchStatus}</span>}
+      </form>
       <div className="doc-actions"><button className="outline-button" onClick={openFloating}><Icon name="expand" /> Floating tutor</button><IconButton icon="more" label="Document options" /></div>
     </header>
-    <div className="learning-area" style={{ gridTemplateColumns: `minmax(460px, 1fr) ${teacherWidth}px` }}>
+    <div className="learning-area" style={{ gridTemplateColumns: `minmax(0, 1fr) minmax(260px, ${teacherWidth}px)` }}>
       <section className="document-stage learning-real-document" style={{ "--paper-scale": zoom / 100 } as React.CSSProperties}>
         <div className="page-location"><span>Indexed page · Parsed word locations</span><small>Page {currentPage}</small></div>
         <Suspense fallback={<p className="document-library-message" role="status">Opening your document…</p>}>
           {appConfig.demoMode
             ? <DocumentPage page={currentPage} searchQuery={searchQuery} />
-            : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} onAskSelection={(text, pageIndex) => setSelectionContext({ text, pageIndex })} />}
+            : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} searchQuery={searchQuery} onAskSelection={(text, pageIndex) => setSelectionContext({ text, pageIndex })} />}
         </Suspense>
-        {captionsEnabled && <LiveCaptions transparency={captionTransparency} contrast={captionContrast} />}
+        {captionsEnabled && <LiveCaptions transparency={captionTransparency} contrast={captionContrast} textSize={captionTextSize} position={captionPosition} />}
       </section>
-      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} onTranscriptChange={setTranscript} onResizeStart={() => {
+      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} onTranscriptChange={setTranscript} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} teachingStyle={teachingStyle} onResizeStart={() => {
         resizing.current = true;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";

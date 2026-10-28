@@ -217,7 +217,7 @@ export async function migrateLegacyLearningProgress(
       { id: document.id, filename: document.filename, pageCount: document.pageCount },
       {
         pageIndex: Math.min(document.pageCount - 1, item.pageIndex),
-        zoom: Math.min(116, Math.max(68, Math.round(item.zoom))),
+        zoom: Math.min(120, Math.max(68, Math.round(item.zoom))),
         workspaceState: createInitialWorkspaceState(appConfig.showMockExamples),
       },
     )

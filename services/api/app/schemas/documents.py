@@ -138,7 +138,7 @@ class DocumentLearningStateWrite(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     page_index: int = Field(ge=0)
-    zoom: int = Field(ge=68, le=116)
+    zoom: int = Field(ge=68, le=120)
     workspace_state: WorkspaceState
 
 

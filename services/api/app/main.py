@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.routers.health import router as health_router
 from app.routers.documents import router as documents_router
 from app.routers.users import router as users_router
+from app.routers.settings import router as settings_router
 
 settings = get_settings()
 logger = logging.getLogger("pixielearn.api")
@@ -84,6 +85,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(users_router)
+app.include_router(settings_router)
 app.include_router(documents_router)
 
 
