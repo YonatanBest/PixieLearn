@@ -75,15 +75,18 @@ VITE_API_URL=http://localhost:3000/api
 VITE_ENABLE_MOCK_AUTH=false
 ```
 
-The frontend currently exposes a typed auth boundary with these backend endpoints:
+The frontend currently exposes a typed auth boundary for Better Auth. The backend should mount Better Auth at `/api/auth` and expose these standard endpoints:
 
 ```text
-POST /auth/login
-POST /auth/signup
-POST /auth/google
-POST /auth/password-reset
-POST /auth/logout
+POST /api/auth/sign-in/email
+POST /api/auth/sign-up/email
+POST /api/auth/sign-in/social
+POST /api/auth/request-password-reset
+POST /api/auth/sign-out
+GET  /api/auth/get-session
 ```
+
+The frontend maps Better Auth's `{ user, session }` responses to the local `AuthUser` contract. Email/password and Google authentication should be configured in Better Auth on the backend. `GET /api/auth/get-session` should be used next to restore the session after a browser refresh.
 
 Until `VITE_ENABLE_MOCK_AUTH=false` is set, the auth screens use a local demo service so the frontend remains runnable without a backend.
 

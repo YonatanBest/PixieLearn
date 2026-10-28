@@ -2,6 +2,28 @@ import { apiRequest } from "../../lib/api/client";
 import { appConfig } from "../../lib/config";
 import type { AuthService, AuthUser, LoginCredentials, SignupCredentials } from "./types";
 
+type BetterAuthResponse = {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    image?: string | null;
+  };
+  session?: {
+    id: string;
+    expiresAt: string;
+  };
+};
+
+function mapUser(user: BetterAuthResponse["user"]): AuthUser {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    ...(user.image ? { avatarUrl: user.image } : {}),
+  };
+}
+
 const demoUser: AuthUser = {
   id: "demo-user",
   name: "Alex Morgan",
@@ -9,24 +31,50 @@ const demoUser: AuthUser = {
 };
 
 class HttpAuthService implements AuthService {
-  login(credentials: LoginCredentials) {
-    return apiRequest<AuthUser>("/auth/login", { method: "POST", body: credentials });
+  async login(credentials: LoginCredentials) {
+    const response = await apiRequest<BetterAuthResponse>("/auth/sign-in/email", {
+      method: "POST",
+      body: {
+        email: credentials.email,
+        password: credentials.password,
+        rememberMe: credentials.remember,
+      },
+    });
+    return mapUser(response.user);
   }
 
-  signup(credentials: SignupCredentials) {
-    return apiRequest<AuthUser>("/auth/signup", { method: "POST", body: credentials });
+  async signup(credentials: SignupCredentials) {
+    const response = await apiRequest<BetterAuthResponse>("/auth/sign-up/email", {
+      method: "POST",
+      body: credentials,
+    });
+    return mapUser(response.user);
   }
 
-  loginWithGoogle() {
-    return apiRequest<AuthUser>("/auth/google", { method: "POST" });
+  async loginWithGoogle() {
+    const response = await apiRequest<BetterAuthResponse>("/auth/sign-in/social", {
+      method: "POST",
+      body: {
+        provider: "google",
+        callbackURL: window.location.origin,
+        disableRedirect: true,
+      },
+    });
+    return mapUser(response.user);
   }
 
   async requestPasswordReset(email: string) {
-    await apiRequest<void>("/auth/password-reset", { method: "POST", body: { email } });
+    await apiRequest<void>("/auth/request-password-reset", {
+      method: "POST",
+      body: {
+        email,
+        redirectTo: `${window.location.origin}/reset-password`,
+      },
+    });
   }
 
   async logout() {
-    await apiRequest<void>("/auth/logout", { method: "POST" });
+    await apiRequest<void>("/auth/sign-out", { method: "POST" });
   }
 }
 
