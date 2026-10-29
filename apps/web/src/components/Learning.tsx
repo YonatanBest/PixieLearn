@@ -1,7 +1,6 @@
 import { FormEvent, ReactNode, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Icon, IconButton, MuteButton, type IconName } from "./Icon";
 import DocumentLibrary from "../features/documents/DocumentLibrary";
-import LearningDocumentChooser from "../features/documents/LearningDocumentChooser";
 import type { LearningDocument } from "../features/documents/service";
 import { appConfig } from "../lib/config";
 import type {
@@ -335,7 +334,7 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
   </aside>;
 }
 
-export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, captionTransparency, setCaptionTransparency, captionContrast, setCaptionContrast, learningDocument, learningState, onWorkspaceChange, onWorkspaceCheckpoint, onOpenDocument, onBrowseLibrary }: { openFloating: () => void; captionsEnabled: boolean; setCaptionsEnabled: (enabled: boolean) => void; captionTransparency: number; setCaptionTransparency: (value: number) => void; captionContrast: number; setCaptionContrast: (value: number) => void; learningDocument?: LearningDocument | null; learningState?: DocumentLearningState | null; onWorkspaceChange: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onWorkspaceCheckpoint: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onOpenDocument: (document: LearningDocument) => void; onBrowseLibrary: () => void }) {
+export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, captionTransparency, setCaptionTransparency, captionContrast, setCaptionContrast, learningDocument, learningState, onWorkspaceChange, onWorkspaceCheckpoint, onOpenDocument }: { openFloating: () => void; captionsEnabled: boolean; setCaptionsEnabled: (enabled: boolean) => void; captionTransparency: number; setCaptionTransparency: (value: number) => void; captionContrast: number; setCaptionContrast: (value: number) => void; learningDocument?: LearningDocument | null; learningState?: DocumentLearningState | null; onWorkspaceChange: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onWorkspaceCheckpoint: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onOpenDocument: (document: LearningDocument) => void }) {
   const [teacherState, setTeacherState] = useState<TeacherState>("teaching");
   const [boardOpen, setBoardOpen] = useState(false);
   const [whiteboardDrawing, setWhiteboardDrawing] = useState<WhiteboardStroke[]>([]);
@@ -502,7 +501,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     persistedSnapshot.current = serialized;
     onWorkspaceChangeRef.current(learningDocument, next);
   }, [learningDocument?.id, currentPage, zoom, teacherState, selectionContext, transcript, boardOpen, whiteboardDrawing, whiteboardDiagrams, captionsEnabled, captionTransparency, captionContrast]);
-  if (!learningDocument) return <LearningDocumentChooser onOpenDocument={onOpenDocument} onBrowseLibrary={onBrowseLibrary} />;
+  if (!learningDocument) return null;
   const pageCount = learningDocument.pageCount;
   const setDocumentPage = (page: number) => {
     setSelectionContext(null);
@@ -558,10 +557,10 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   </main>;
 }
 
-export function Home({ onStart, onOpenDocument }: { onStart: () => void; onOpenDocument?: (document: LearningDocument) => void }) {
+export function Home({ onOpenDocument }: { onOpenDocument?: (document: LearningDocument) => void }) {
   const today = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date()).toUpperCase();
   return <main className="home-view">
-    <header><div><span className="eyebrow">{today}</span><h1>Your learning library</h1><p>Pick up with your documents whenever you are ready.</p></div><button type="button" className="primary-button" onClick={onStart}><Icon name="plus" /> New learning session</button></header>
+    <header><div><span className="eyebrow">{today}</span><h1>Your learning library</h1><p>Pick up with your documents whenever you are ready.</p></div></header>
     <DocumentLibrary onOpenDocument={onOpenDocument} />
   </main>;
 }

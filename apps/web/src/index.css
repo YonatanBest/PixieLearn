@@ -65,9 +65,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .logo-mark .logo-l { stroke: #f4f1e8; stroke-width: 2.2; }
 .icon-button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; transition: .15s; padding: 0; }
 .icon-button:hover, .icon-button.active { background: var(--surface-2); color: var(--text); }
-.new-session { border: 1px solid #3b3e46; background: var(--surface); height: 40px; border-radius: 9px; margin: 18px 0; display: flex; align-items: center; justify-content: center; gap: 9px; font-weight: 600; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.new-session:hover { border-color: #555a65; background: var(--surface-2); }
-.collapsed .new-session { width: 42px; }
 .main-nav { display: grid; gap: 3px; }
 .nav-item { border: 0; background: transparent; height: 38px; padding: 0 10px; border-radius: 8px; display: flex; gap: 11px; align-items: center; color: var(--muted); cursor: pointer; font-size: 13px; text-align: left; white-space: nowrap; }
 .nav-item:hover { color: var(--text); background: rgba(255,255,255,.035); }
@@ -153,20 +150,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .learning-pdf-meta details { border-top: 1px solid var(--border); padding-top: 8px; }
 .learning-pdf-meta summary { cursor: pointer; color: var(--text); }
 .learning-pdf-meta pre { max-height: 180px; overflow: auto; white-space: pre-wrap; color: var(--muted); font: inherit; line-height: 1.5; }
-.session-chooser { overflow: auto; }
-.session-chooser-content { width: min(900px, calc(100% - 48px)); margin: 44px auto; }
-.session-chooser-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
-.session-chooser-heading h1 { margin: 7px 0; color: var(--text); font-size: 23px; }
-.session-chooser-heading p, .session-chooser-empty span { margin: 0; color: var(--muted); font-size: 11px; }
-.session-document-list { display: grid; gap: 8px; }
-.session-document-row { padding: 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
-.session-document-open { display: flex; width: 100%; align-items: center; gap: 12px; border: 0; text-align: left; background: transparent; color: inherit; cursor: pointer; }
-.session-document-open:disabled { cursor: default; }
-.session-document-open:disabled .document-card-copy { opacity: .7; }
-.session-document-open .document-card-copy { flex: 1; min-width: 0; }
-.session-open-label { color: var(--yellow); font-size: 10px; }
-.session-document-row > .secondary-button { margin: 8px 0 0 48px; }
-.session-chooser-empty { display: grid; gap: 7px; padding: 28px; border: 1px dashed var(--border); border-radius: 10px; color: var(--text); text-align: center; }
 .document-card-retry { margin-left: auto; }
 .document-card-entry { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 10px; }
 .document-card-actions { display: flex; align-items: center; gap: 6px; }
@@ -656,8 +639,6 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 [data-theme="light"] .page-tools span b { background: #e2e2de; }
 [data-theme="light"] .nav-item:hover,
 [data-theme="light"] .recent-doc:hover { background: rgba(0,0,0,.04); }
-[data-theme="light"] .new-session { border-color: #c8c8c3; }
-[data-theme="light"] .new-session:hover { border-color: #ababaa; }
 [data-theme="light"] .avatar { background: #c9c9c5; color: #4c4c4a; }
 [data-theme="light"] .floating-scene { background: #dededb; }
 [data-theme="light"] .floating-tutor { background: rgba(250,250,248,.97); }
@@ -674,8 +655,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 
 @media (max-width: 1220px) {
   .sidebar { width: 68px; flex-basis: 68px; }
-  .sidebar .brand-row strong, .sidebar .new-session span, .sidebar .nav-item span, .sidebar .recent, .sidebar .profile > span:not(.avatar), .sidebar .profile .icon { display: none; }
-  .sidebar .new-session { width: 42px; }
+  .sidebar .brand-row strong, .sidebar .nav-item span, .sidebar .recent, .sidebar .profile > span:not(.avatar), .sidebar .profile .icon { display: none; }
   .sidebar .nav-item { justify-content: center; padding: 0; }
   .learning-area { grid-template-columns: minmax(430px,1fr) 330px; }
   .outline-button { padding: 0 8px; }
