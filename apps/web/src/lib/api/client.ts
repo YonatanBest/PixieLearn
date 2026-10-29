@@ -49,10 +49,39 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const payload: unknown = contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
     const data = typeof payload === "object" && payload !== null
-      ? payload as { message?: string; code?: string; requestId?: string }
+      ? payload as { message?: string; detail?: string; code?: string; requestId?: string }
       : {};
     const requestId = response.headers.get("X-Request-ID") || data.requestId;
-    throw new ApiError(data.message || "The request could not be completed. Please try again.", response.status, data.code, requestId);
+    throw new ApiError(data.message || data.detail || "The request could not be completed. Please try again.", response.status, data.code, requestId);
   }
   return payload as T;
+}
+
+export async function apiBlobRequest(path: string): Promise<Uint8Array> {
+  let response: Response;
+  try {
+    response = await fetch(`${appConfig.apiBaseUrl}${path}`, {
+      method: "GET",
+      headers: { Accept: "application/pdf, application/json" },
+      credentials: "include",
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    throw new ApiError("PixieLearn could not reach the service. Check your connection and try again.", 0, "NETWORK_ERROR");
+  }
+
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") ?? "";
+    const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+    const data = typeof payload === "object" && payload !== null
+      ? payload as { message?: string; detail?: string; code?: string; requestId?: string }
+      : {};
+    throw new ApiError(data.message || data.detail || "The PDF could not be loaded. Try again.", response.status, data.code, response.headers.get("X-Request-ID") || data.requestId);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/pdf")) {
+    throw new ApiError("The document service returned an invalid PDF response.", 502, "INVALID_PDF_RESPONSE");
+  }
+  return new Uint8Array(await response.arrayBuffer());
 }

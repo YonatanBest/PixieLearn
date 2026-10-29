@@ -3,7 +3,7 @@ import { Icon, IconButton, type IconName } from "./Icon";
 
 export type View = "workspace" | "home" | "settings";
 
-export function Sidebar({ view, setView, collapsed, setCollapsed, theme, toggleTheme, onLogout }: { view: View; setView: (v: View) => void; collapsed: boolean; setCollapsed: (v: boolean) => void; theme: "dark" | "light"; toggleTheme: () => void; onLogout: () => void }) {
+export function Sidebar({ view, setView, onNewSession, collapsed, setCollapsed, theme, toggleTheme, onLogout }: { view: View; setView: (v: View) => void; onNewSession: () => void; collapsed: boolean; setCollapsed: (v: boolean) => void; theme: "dark" | "light"; toggleTheme: () => void; onLogout: () => void }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const items: { icon: IconName; label: string; value: View | "notes" }[] = [
     { icon: "home", label: "Home", value: "home" },
@@ -16,7 +16,7 @@ export function Sidebar({ view, setView, collapsed, setCollapsed, theme, toggleT
       {!collapsed && <strong>PixieLearn</strong>}
       <IconButton icon="panel" label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(!collapsed)} />
     </div>
-    <button className="new-session" onClick={() => setView("workspace")}><Icon name="plus" />{!collapsed && <span>New learning session</span>}</button>
+    <button className="new-session" onClick={onNewSession}><Icon name="plus" />{!collapsed && <span>New learning session</span>}</button>
     <nav className="main-nav" aria-label="Main navigation">
       {items.map((item) => <button key={item.label} className={`nav-item ${item.value === view ? "active" : ""}`} onClick={() => item.value !== "notes" && setView(item.value)}>
         <Icon name={item.icon} /><span>{item.label}</span>{!collapsed && item.value === "workspace" && <span className="count">3</span>}

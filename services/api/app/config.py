@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_name: str = "PixieLearn API"
     frontend_origin: str = "http://localhost:8443"
-    better_auth_base_url: str = "http://localhost:3001"
+    better_auth_base_url: str = "http://127.0.0.1:3001"
     better_auth_cookie_name: str = "better-auth.session_token"
     better_auth_timeout_seconds: float = 5.0
     database_url: str = "postgresql+psycopg://pixielearn:pixielearn@localhost:5432/pixielearn"

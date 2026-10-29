@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -20,7 +20,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.models import DocumentPageRecord, DocumentRecord
 from app.schemas.auth import AuthUser
-from app.storage import get_document_storage
+from app.storage import StorageUnavailableError, get_document_storage
 
 
 def create_document_test_app(document_owner_id: str) -> FastAPI:
@@ -49,15 +49,28 @@ class MemoryDocumentStorage:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.download_requests: list[tuple[str, int]] = []
+        self.range_requests: list[tuple[str, int, int]] = []
+        self.fail_next_delete = False
 
     def put(self, key: str, body, content_type: str) -> None:
         self.objects[key] = body.read()
 
     def delete(self, key: str) -> None:
+        if self.fail_next_delete:
+            self.fail_next_delete = False
+            raise StorageUnavailableError
         self.objects.pop(key, None)
 
     def download(self, key: str, destination) -> None:
         destination.write(self.objects[key])
+
+    def get_size(self, key: str) -> int:
+        return len(self.objects[key])
+
+    def get_range(self, key: str, start: int, end: int) -> tuple[bytes, int]:
+        self.range_requests.append((key, start, end))
+        content = self.objects[key]
+        return content[start : end + 1], len(content)
 
     def create_download_url(self, key: str, expires_in: int) -> str:
         self.download_requests.append((key, expires_in))
@@ -422,11 +435,276 @@ def test_document_details_and_download_urls_are_owner_only(document_api, monkeyp
     assert storage.download_requests == [(storage_key, 300)]
 
 
+def test_learning_pdf_streams_private_original_and_hides_other_users_document(document_api, monkeypatch) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    storage_key = f"documents/{document_id}/original"
+    pdf_bytes = b"%PDF-1.7\nprivate lesson pdf\n%%EOF"
+    storage.objects[storage_key] = pdf_bytes
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="private-lesson.pdf",
+                content_type="application/pdf",
+                size_bytes=len(pdf_bytes),
+                storage_key=storage_key,
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    response = client.get(f"/api/documents/{document_id}/learning-pdf")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"] == "inline; filename*=UTF-8''private-lesson.pdf"
+    assert response.content == pdf_bytes
+
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        require_authenticated_user,
+        lambda: AuthUser(id="learner-2", name="Sam Student", email="sam@example.com"),
+    )
+    other_user_response = client.get(f"/api/documents/{document_id}/learning-pdf")
+
+    assert other_user_response.status_code == 404
+    assert other_user_response.json()["message"] == "Document not found."
+
+
+def test_learning_pdf_uses_the_pptx_rendition_and_requires_ready_status(document_api) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    original_key = f"documents/{document_id}/original"
+    rendition_key = f"documents/{document_id}/rendition.pdf"
+    rendition_bytes = b"%PDF-1.7\nconverted slides\n%%EOF"
+    storage.objects[original_key] = b"private pptx"
+    storage.objects[rendition_key] = rendition_bytes
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="slides.pptx",
+                content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                size_bytes=12,
+                storage_key=original_key,
+                rendition_storage_key=rendition_key,
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    ready_response = client.get(f"/api/documents/{document_id}/learning-pdf")
+
+    assert ready_response.status_code == 200
+    assert ready_response.content == rendition_bytes
+
+    with sessions() as session:
+        document = session.get(DocumentRecord, document_id)
+        assert document is not None
+        document.status = "processing"
+        session.commit()
+
+    pending_response = client.get(f"/api/documents/{document_id}/learning-pdf")
+
+    assert pending_response.status_code == 409
+
+
+def test_learning_pdf_serves_single_byte_ranges(document_api) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    storage_key = f"documents/{document_id}/original"
+    pdf_bytes = b"%PDF-1.7\nrange-readable-content\n%%EOF"
+    storage.objects[storage_key] = pdf_bytes
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="range.pdf",
+                content_type="application/pdf",
+                size_bytes=len(pdf_bytes),
+                storage_key=storage_key,
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    response = client.get(f"/api/documents/{document_id}/learning-pdf", headers={"Range": "bytes=0-7"})
+
+    assert response.status_code == 206
+    assert response.content == pdf_bytes[:8]
+    assert response.headers["accept-ranges"] == "bytes"
+    assert response.headers["content-range"] == f"bytes 0-7/{len(pdf_bytes)}"
+    assert storage.range_requests == [(storage_key, 0, 7)]
+
+
+def test_learning_pdf_rejects_an_unsatisfiable_range(document_api) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    storage_key = f"documents/{document_id}/original"
+    storage.objects[storage_key] = b"%PDF-1.7\nshort\n%%EOF"
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="short.pdf",
+                content_type="application/pdf",
+                size_bytes=len(storage.objects[storage_key]),
+                storage_key=storage_key,
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    response = client.get(
+        f"/api/documents/{document_id}/learning-pdf",
+        headers={"Range": "bytes=999-"},
+    )
+
+    assert response.status_code == 416
+    assert response.headers["content-range"] == f"bytes */{len(storage.objects[storage_key])}"
+    assert storage.range_requests == []
+
+
+def test_owner_can_delete_document_and_its_rendition_and_page_text(document_api) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    original_key = f"documents/{document_id}/original"
+    rendition_key = f"documents/{document_id}/rendition.pdf"
+    storage.objects[original_key] = b"private original"
+    storage.objects[rendition_key] = b"private rendition"
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="slides.pptx",
+                content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                size_bytes=len(storage.objects[original_key]),
+                storage_key=original_key,
+                rendition_storage_key=rendition_key,
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            DocumentPageRecord(
+                document_id=document_id,
+                page_index=0,
+                page_width=612,
+                page_height=792,
+                text="Private extracted text",
+                spans=[],
+                used_ocr=False,
+                extractor_version="1",
+            )
+        )
+        session.commit()
+
+    response = client.delete(f"/api/documents/{document_id}")
+
+    assert response.status_code == 204
+    assert storage.objects == {}
+    with sessions() as session:
+        assert session.get(DocumentRecord, document_id) is None
+        assert session.scalar(
+            select(DocumentPageRecord).where(DocumentPageRecord.document_id == document_id)
+        ) is None
+
+
+def test_document_deletion_is_owner_scoped(document_api, monkeypatch) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    storage_key = f"documents/{document_id}/original"
+    storage.objects[storage_key] = b"private original"
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="private.pdf",
+                content_type="application/pdf",
+                size_bytes=len(storage.objects[storage_key]),
+                storage_key=storage_key,
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        require_authenticated_user,
+        lambda: AuthUser(id="learner-2", name="Sam Student", email="sam@example.com"),
+    )
+
+    response = client.delete(f"/api/documents/{document_id}")
+
+    assert response.status_code == 404
+    assert response.json()["message"] == "Document not found."
+    assert storage.objects == {storage_key: b"private original"}
+
+
+def test_document_deletion_can_be_retried_after_storage_failure(document_api) -> None:
+    client, storage, sessions = document_api
+    document_id = uuid4()
+    storage_key = f"documents/{document_id}/original"
+    storage.objects[storage_key] = b"private original"
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="private.pdf",
+                content_type="application/pdf",
+                size_bytes=len(storage.objects[storage_key]),
+                storage_key=storage_key,
+                status="ready",
+                page_count=1,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+    storage.fail_next_delete = True
+
+    failed_response = client.delete(f"/api/documents/{document_id}")
+    retry_response = client.delete(f"/api/documents/{document_id}")
+
+    assert failed_response.status_code == 503
+    assert failed_response.json()["message"] == "Document cleanup is incomplete. Retry deletion."
+    assert retry_response.status_code == 204
+    assert storage.objects == {}
+    with sessions() as session:
+        assert session.get(DocumentRecord, document_id) is None
+
 def test_document_routes_reject_unauthenticated_requests(document_api, monkeypatch) -> None:
     client, _storage, _sessions = document_api
     monkeypatch.delitem(app.dependency_overrides, require_authenticated_user)
 
     response = client.get("/api/documents")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
+
+
+def test_learning_pdf_rejects_unauthenticated_requests(document_api, monkeypatch) -> None:
+    client, _storage, _sessions = document_api
+    monkeypatch.delitem(app.dependency_overrides, require_authenticated_user)
+
+    response = client.get("/api/documents/73e7aef6-5600-4a8b-8be1-aeaa49099f34/learning-pdf")
 
     assert response.status_code == 401
     assert response.json()["code"] == "UNAUTHENTICATED"

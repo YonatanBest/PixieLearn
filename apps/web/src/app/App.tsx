@@ -6,6 +6,7 @@ import { Home, Workspace } from "../components/Learning";
 import { SettingsView } from "../components/Settings";
 import { authService } from "../features/auth/service";
 import type { AuthUser } from "../features/auth/types";
+import type { LearningDocument } from "../features/documents/service";
 
 type PublicView = PublicRoute;
 
@@ -20,6 +21,7 @@ export default function App() {
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
   const [captionTransparency, setCaptionTransparency] = useState(18);
   const [captionContrast, setCaptionContrast] = useState(100);
+  const [learningDocument, setLearningDocument] = useState<LearningDocument | null>(null);
   useEffect(() => {
     let active = true;
     authService.getSession()
@@ -35,8 +37,8 @@ export default function App() {
     return <div className="public-shell" data-theme={theme}><PublicAuthPage mode={publicView} onModeChange={(mode) => setPublicView(mode)} onAuthenticated={(user: AuthUser) => { setAuthUser(user); setView("home"); }} /></div>;
   }
   return <div className="app-shell" data-theme={theme}>
-    <Sidebar view={view} setView={setView} collapsed={collapsed} setCollapsed={setCollapsed} theme={theme} toggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogout={async () => { await authService.logout(); setAuthUser(null); setPublicView("landing"); setFloating(false); }} />
-    {view === "workspace" ? <Workspace openFloating={() => setFloating(true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} /> : view === "home" ? <Home onStart={() => setView("workspace")} /> : <SettingsView />}
+    <Sidebar view={view} setView={setView} onNewSession={() => { setLearningDocument(null); setView("workspace"); }} collapsed={collapsed} setCollapsed={setCollapsed} theme={theme} toggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogout={async () => { await authService.logout(); setAuthUser(null); setPublicView("landing"); setFloating(false); setLearningDocument(null); }} />
+    {view === "workspace" ? <Workspace openFloating={() => setFloating(true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} learningDocument={learningDocument} onOpenDocument={(document) => setLearningDocument(document)} onBrowseLibrary={() => setView("home")} /> : view === "home" ? <Home onStart={() => { setLearningDocument(null); setView("workspace"); }} onOpenDocument={(document) => { setLearningDocument(document); setView("workspace"); }} /> : <SettingsView />}
     {floating && <FloatingTutor onOpen={() => { setFloating(false); setView("workspace"); }} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} />}
   </div>;
 }
