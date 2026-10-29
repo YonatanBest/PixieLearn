@@ -7,6 +7,9 @@ import MyLearning from "./MyLearning"
 import { listDocuments } from "./service"
 
 vi.mock("./service", () => ({ listDocuments: vi.fn() }))
+vi.mock("../../lib/config", () => ({
+  appConfig: { demoMode: false, showMockExamples: false },
+}))
 vi.mock("./learningProgress", () => ({
   getLearningProgress: vi.fn(),
   migrateLegacyLearningProgress: vi.fn(),
@@ -47,7 +50,6 @@ async function renderMyLearning(onOpenDocument = vi.fn()) {
 }
 
 beforeEach(() => {
-  window.localStorage.clear()
   vi.mocked(listDocuments).mockReset()
   vi.mocked(listDocuments).mockResolvedValue([recentPdf])
   vi.mocked(getLearningProgress).mockReset()

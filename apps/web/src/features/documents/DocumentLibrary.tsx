@@ -10,6 +10,7 @@ import {
   type DocumentItem,
   type LearningDocument,
 } from "./service"
+import { appConfig } from "../../lib/config"
 
 const errorText = (error: unknown) =>
   error instanceof ApiError
@@ -158,51 +159,55 @@ export default function DocumentLibrary({ onOpenDocument }: { onOpenDocument?: (
         <div>
           <span className="eyebrow">YOUR LIBRARY</span>
           <h2>Documents</h2>
-          <p>
-            Private to your account. PDF and PowerPoint files up to 100 MiB.
-          </p>
+          <p>{appConfig.demoMode
+            ? "Explore the sample document in this demo."
+            : "Private to your account. PDF and PowerPoint files up to 100 MiB."}</p>
         </div>
+        {appConfig.demoMode ? <p className="document-library-message">Demo mode uses sample data only. Uploads are disabled.</p> : <>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => input.current?.click()}
+            disabled={uploading}
+          >
+            <Icon name="upload" />
+            {uploading ? "Uploading…" : "Upload document"}
+          </button>
+          <input
+            ref={input}
+            className="visually-hidden"
+            type="file"
+            accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            onChange={(event) => void upload(event.currentTarget.files?.[0])}
+          />
+        </>}
+      </header>
+      {!appConfig.demoMode && <>
         <button
-          className="primary-button"
+          className="document-demo-button"
           type="button"
-          onClick={() => input.current?.click()}
+          onClick={() => void uploadSamplePdf()}
           disabled={uploading}
         >
-          <Icon name="upload" />
-          {uploading ? "Uploading…" : "Upload document"}
+          Try the sample indexing PDF
         </button>
-        <input
-          ref={input}
-          className="visually-hidden"
-          type="file"
-          accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-          onChange={(event) => void upload(event.currentTarget.files?.[0])}
-        />
-      </header>
-      <button
-        className="document-demo-button"
-        type="button"
-        onClick={() => void uploadSamplePdf()}
-        disabled={uploading}
-      >
-        Try the sample indexing PDF
-      </button>
-      <button
-        className="document-drop-zone"
-        type="button"
-        onClick={() => input.current?.click()}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault()
-          void upload(event.dataTransfer.files[0])
-        }}
-      >
-        <Icon name="upload" size={22} />
-        <span>
-          <b>Drop a PDF or PPTX here</b>
-          <small>or browse your files · up to 100 MiB</small>
-        </span>
-      </button>
+        <button
+          className="document-drop-zone"
+          type="button"
+          onClick={() => input.current?.click()}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault()
+            void upload(event.dataTransfer.files[0])
+          }}
+        >
+          <Icon name="upload" size={22} />
+          <span>
+            <b>Drop a PDF or PPTX here</b>
+            <small>or browse your files · up to 100 MiB</small>
+          </span>
+        </button>
+      </>}
       {error && (
         <p className="document-library-error" role="alert">
           {error}
@@ -242,11 +247,13 @@ export default function DocumentLibrary({ onOpenDocument }: { onOpenDocument?: (
               <Icon name="chevron" />
             </button>
             <div className="document-card-actions">
-              {item.status === "failed" && <button type="button" className="secondary-button document-card-retry" onClick={() => void retryProcessing(item)} disabled={retrying}>{retrying ? "Retrying…" : "Retry processing"}</button>}
-              <button type="button" className="secondary-button document-card-delete" aria-label={`${item.status === "deleting" ? "Retry deletion of" : "Delete"} ${item.filename}`} onClick={() => void removeDocument(item)} disabled={deletingId === item.id}>
-                <Icon name="trash" size={14} />
-                <span>{deletingId === item.id ? "Deleting…" : item.status === "deleting" ? "Retry deletion" : "Delete"}</span>
-              </button>
+              {!appConfig.demoMode && <>
+                {item.status === "failed" && <button type="button" className="secondary-button document-card-retry" onClick={() => void retryProcessing(item)} disabled={retrying}>{retrying ? "Retrying…" : "Retry processing"}</button>}
+                <button type="button" className="secondary-button document-card-delete" aria-label={`${item.status === "deleting" ? "Retry deletion of" : "Delete"} ${item.filename}`} onClick={() => void removeDocument(item)} disabled={deletingId === item.id}>
+                  <Icon name="trash" size={14} />
+                  <span>{deletingId === item.id ? "Deleting…" : item.status === "deleting" ? "Retry deletion" : "Delete"}</span>
+                </button>
+              </>}
             </div>
             {item.processingError && <p className="document-library-error document-card-error">{item.processingError}</p>}
             </div>

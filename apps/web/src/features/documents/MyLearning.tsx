@@ -3,6 +3,7 @@ import { Icon } from "../../components/Icon"
 import { ApiError } from "../../lib/api/client"
 import { listDocuments, type DocumentItem, type LearningDocument } from "./service"
 import { getLearningProgress, migrateLegacyLearningProgress, type LearningProgress } from "./learningProgress"
+import { appConfig } from "../../lib/config"
 
 type ProgressDocument = {
   document: LearningDocument
@@ -102,7 +103,7 @@ export default function MyLearning({ onOpenDocument, onBrowseLibrary }: {
       </header>
       <section className="my-learning-section" aria-label="Previously opened documents">
         <div className="my-learning-section-heading">
-          <div><h2>Recently opened</h2><p>Your page progress is saved to your account.</p></div>
+          <div><h2>Recently opened</h2><p>{appConfig.demoMode ? "Demo progress lasts for this browser session only." : "Your page progress is saved to your account."}</p></div>
           {!loading && items.length > 0 && <span>{items.length} {items.length === 1 ? "document" : "documents"}</span>}
         </div>
         {error && <p className="document-library-error" role="alert">{error}</p>}

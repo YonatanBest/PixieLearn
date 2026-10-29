@@ -1,6 +1,6 @@
 import { apiRequest } from "../../lib/api/client"
 import { appConfig } from "../../lib/config"
-import type { DocumentItem, LearningDocument } from "./service"
+import { demoDocument, type DocumentItem, type LearningDocument } from "./service"
 
 export type LearningProgress = {
   documentId: string
@@ -120,8 +120,10 @@ export function normalizeWhiteboardDiagrams(
 }
 
 const learningStateCacheKey = (documentId: string) => `pixielearn.learning-state:${documentId}`
+const demoLearningStates = new Map<string, CachedDocumentLearningState>()
 
 export function readCachedDocumentLearningState(documentId: string): CachedDocumentLearningState | null {
+  if (appConfig.demoMode) return demoLearningStates.get(documentId) ?? null
   const serialized = window.localStorage.getItem(learningStateCacheKey(documentId))
   if (!serialized) return null
   try {
@@ -137,6 +139,10 @@ export function readCachedDocumentLearningState(documentId: string): CachedDocum
 }
 
 export function cacheDocumentLearningState(state: DocumentLearningState, dirty: boolean): void {
+  if (appConfig.demoMode) {
+    demoLearningStates.set(state.documentId, { state, dirty })
+    return
+  }
   window.localStorage.setItem(learningStateCacheKey(state.documentId), JSON.stringify({ state, dirty }))
 }
 
@@ -144,6 +150,7 @@ export async function migrateLegacyLearningProgress(
   documents: DocumentItem[],
   savedProgress: LearningProgress[],
 ): Promise<LearningProgress[]> {
+  if (appConfig.demoMode) return Promise.resolve(savedProgress)
   const storageKey = "pixielearn.learning-progress"
   const legacy = window.localStorage.getItem(storageKey)
   if (!legacy) return savedProgress
@@ -194,10 +201,32 @@ export async function migrateLegacyLearningProgress(
 }
 
 export function getLearningProgress(): Promise<LearningProgress[]> {
+  if (appConfig.demoMode) {
+    return Promise.resolve([...demoLearningStates.values()].map(({ state }) => ({
+      documentId: state.documentId,
+      pageIndex: state.pageIndex,
+      pageCount: state.pageCount,
+      zoom: state.zoom,
+      lastOpenedAt: state.lastOpenedAt,
+    })))
+  }
   return apiRequest<LearningProgress[]>("/documents/learning-progress")
 }
 
 export function getDocumentLearningState(documentId: string): Promise<DocumentLearningState> {
+  if (appConfig.demoMode) {
+    if (documentId !== demoDocument.id) return Promise.reject(new Error("Demo document was not found."))
+    const cached = demoLearningStates.get(documentId)
+    return Promise.resolve(cached?.state ?? {
+      documentId,
+      pageIndex: 0,
+      pageCount: demoDocument.pageCount ?? 15,
+      zoom: 84,
+      lastOpenedAt: new Date().toISOString(),
+      hasSavedState: false,
+      workspaceState: createInitialWorkspaceState(true),
+    })
+  }
   return apiRequest<DocumentLearningState>(`/documents/${documentId}/learning-state`)
 }
 
@@ -207,6 +236,19 @@ export function saveDocumentLearningState(
   document: LearningDocument,
   state: DocumentLearningStateUpdate,
 ): Promise<DocumentLearningState> {
+  if (appConfig.demoMode) {
+    const saved: DocumentLearningState = {
+      documentId: document.id,
+      pageIndex: state.pageIndex,
+      pageCount: document.pageCount,
+      zoom: state.zoom,
+      lastOpenedAt: new Date().toISOString(),
+      hasSavedState: true,
+      workspaceState: state.workspaceState,
+    }
+    demoLearningStates.set(document.id, { state: saved, dirty: false })
+    return Promise.resolve(saved)
+  }
   const previous = saveQueues.get(document.id) ?? Promise.resolve()
   const request = previous.catch(() => undefined).then(() =>
     apiRequest<DocumentLearningState>(`/documents/${document.id}/learning-state`, {

@@ -11,6 +11,9 @@ vi.mock("./service", () => ({
   retryDocumentProcessing: vi.fn(),
   uploadDocument: vi.fn(),
 }))
+vi.mock("../../lib/config", () => ({
+  appConfig: { demoMode: false, showMockExamples: false },
+}))
 
 const readyPdf: DocumentItem = {
   id: "document-7",

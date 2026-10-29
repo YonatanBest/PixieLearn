@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-const { apiRequest } = vi.hoisted(() => ({ apiRequest: vi.fn() }))
+const { apiRequest, appConfig } = vi.hoisted(() => ({
+  apiRequest: vi.fn(),
+  appConfig: { apiBaseUrl: "/api", demoMode: false },
+}))
 
 vi.mock("../../lib/api/client", () => ({ apiRequest }))
-vi.mock("../../lib/config", () => ({ appConfig: { apiBaseUrl: "/api" } }))
+vi.mock("../../lib/config", () => ({ appConfig }))
 
 import {
   getDocument,
@@ -16,10 +19,29 @@ import {
   retryDocumentProcessing,
   uploadDocument,
 } from "./service"
+import { demoDocument } from "./service"
 
 describe("document service", () => {
   beforeEach(() => {
     apiRequest.mockReset()
+    appConfig.demoMode = false
+  })
+
+  it("uses only the sample document in demo mode without calling the API", async () => {
+    appConfig.demoMode = true
+
+    await expect(listDocuments()).resolves.toEqual([demoDocument])
+    await expect(getDocument(demoDocument.id)).resolves.toEqual(demoDocument)
+
+    expect(apiRequest).not.toHaveBeenCalled()
+  })
+
+  it("does not accept uploads in demo mode", async () => {
+    appConfig.demoMode = true
+    const file = new File(["private content"], "private.pdf", { type: "application/pdf" })
+
+    await expect(uploadDocument(file)).rejects.toThrow("Uploads are unavailable in demo mode.")
+    expect(apiRequest).not.toHaveBeenCalled()
   })
 
   it("sends a selected file as multipart form data", async () => {

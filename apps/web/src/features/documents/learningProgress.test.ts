@@ -15,7 +15,21 @@ import {
 } from "./learningProgress"
 import type { DocumentItem } from "./service"
 
+const { appConfig } = vi.hoisted(() => ({ appConfig: { demoMode: false, showMockExamples: false } }))
+
 vi.mock("../../lib/api/client", () => ({ apiRequest: vi.fn() }))
+vi.mock("../../lib/config", () => ({ appConfig }))
+
+class TestStorage implements Storage {
+  private readonly values = new Map<string, string>()
+
+  get length() { return this.values.size }
+  clear() { this.values.clear() }
+  getItem(key: string) { return this.values.get(key) ?? null }
+  key(index: number) { return [...this.values.keys()][index] ?? null }
+  removeItem(key: string) { this.values.delete(key) }
+  setItem(key: string, value: string) { this.values.set(key, String(value)) }
+}
 
 describe("initial whiteboard state", () => {
   it("starts empty outside mock examples mode", () => {
@@ -71,8 +85,46 @@ const workspaceState: WorkspaceState = {
 
 describe("document learning state API", () => {
   beforeEach(() => {
-    window.localStorage.clear()
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: new TestStorage(),
+    })
     vi.mocked(apiRequest).mockReset()
+    appConfig.demoMode = false
+  })
+
+  it("keeps demo progress in memory without reading browser storage or calling the API", async () => {
+    appConfig.demoMode = true
+    const state = {
+      documentId: "demo-attention-paper",
+      pageIndex: 2,
+      pageCount: 15,
+      zoom: 92,
+      lastOpenedAt: "2026-10-23T10:00:00Z",
+      hasSavedState: true,
+      workspaceState,
+    }
+
+    cacheDocumentLearningState(state, true)
+
+    await expect(getDocumentLearningState(state.documentId)).resolves.toEqual(state)
+    await expect(getLearningProgress()).resolves.toEqual([{
+      documentId: state.documentId,
+      pageIndex: state.pageIndex,
+      pageCount: state.pageCount,
+      zoom: state.zoom,
+      lastOpenedAt: state.lastOpenedAt,
+    }])
+    expect(readCachedDocumentLearningState(state.documentId)).toEqual({ state, dirty: true })
+    expect(window.localStorage.length).toBe(0)
+    expect(apiRequest).not.toHaveBeenCalled()
+
+    await expect(saveDocumentLearningState(
+      { id: state.documentId, filename: "Sample.pdf", pageCount: state.pageCount },
+      { pageIndex: state.pageIndex, zoom: state.zoom, workspaceState: state.workspaceState },
+    )).resolves.toMatchObject({ documentId: state.documentId, hasSavedState: true })
+    expect(apiRequest).not.toHaveBeenCalled()
+    expect(window.localStorage.length).toBe(0)
   })
 
   it("loads only progress summaries for the My learning list", async () => {
