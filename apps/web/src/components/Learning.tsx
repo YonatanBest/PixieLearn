@@ -3,8 +3,18 @@ import { Icon, IconButton, MuteButton, type IconName } from "./Icon";
 import DocumentLibrary from "../features/documents/DocumentLibrary";
 import LearningDocumentChooser from "../features/documents/LearningDocumentChooser";
 import type { LearningDocument } from "../features/documents/service";
+import { appConfig } from "../lib/config";
+import type {
+  DocumentLearningState,
+  WhiteboardDiagram,
+  TranscriptMessage,
+  WhiteboardStroke,
+  WorkspaceState,
+} from "../features/documents/learningProgress";
+import { createInitialWorkspaceState } from "../features/documents/learningProgress";
 
 const DocumentTextPreview = lazy(() => import("../features/documents/DocumentTextPreview"));
+const MermaidFigure = lazy(() => import("../features/documents/MermaidFigure"));
 
 export type TeacherState = "teaching" | "quiz" | "feedback" | "question" | "paused" | "complete";
 
@@ -64,33 +74,149 @@ export function DocumentPage({ page, searchQuery }: { page: number; searchQuery:
   </div>;
 }
 
-export function Whiteboard({ onClose }: { onClose: () => void }) {
+export function Whiteboard({ onClose, drawing, onDrawingChange, diagrams, onDiagramsChange }: {
+  onClose: () => void
+  drawing: WhiteboardStroke[]
+  onDrawingChange: (drawing: WhiteboardStroke[]) => void
+  diagrams: WhiteboardDiagram[]
+  onDiagramsChange: (diagrams: WhiteboardDiagram[]) => void
+}) {
+  const [drawingEnabled, setDrawingEnabled] = useState(false);
+  const [drawingNotice, setDrawingNotice] = useState("");
+  const [diagramEditorOpen, setDiagramEditorOpen] = useState(false);
+  const [diagramTitle, setDiagramTitle] = useState("");
+  const [diagramSource, setDiagramSource] = useState("");
+  const drawingPointer = useRef<number | null>(null);
+  const activeStroke = useRef<WhiteboardStroke | null>(null);
+  const [draftStroke, setDraftStroke] = useState<WhiteboardStroke | null>(null);
+  const drawingSvg = useRef<SVGSVGElement>(null);
+  const addPoint = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (drawingPointer.current !== event.pointerId || !drawingSvg.current || !activeStroke.current) return;
+    const bounds = drawingSvg.current.getBoundingClientRect();
+    const point = {
+      x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
+    };
+    if (activeStroke.current.points.length >= 500) {
+      setDrawingNotice("This stroke reached the saved point limit.");
+      return;
+    }
+    const updated = { ...activeStroke.current, points: [...activeStroke.current.points, point] };
+    activeStroke.current = updated;
+    setDraftStroke(updated);
+  };
+  const beginStroke = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (!drawingEnabled) return;
+    if (drawing.length >= 100) {
+      setDrawingNotice("This whiteboard reached its saved stroke limit.");
+      return;
+    }
+    setDrawingNotice("");
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drawingPointer.current = event.pointerId;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const stroke: WhiteboardStroke = {
+      points: [{
+        x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
+        y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
+      }],
+      color: "#6f62d9",
+      width: 3,
+    };
+    activeStroke.current = stroke;
+    setDraftStroke(stroke);
+  };
+  const endStroke = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (drawingPointer.current !== event.pointerId) return;
+    drawingPointer.current = null;
+    if (activeStroke.current) onDrawingChange([...drawing, activeStroke.current]);
+    activeStroke.current = null;
+    setDraftStroke(null);
+  };
+  const visibleDrawing = draftStroke ? [...drawing, draftStroke] : drawing;
+  const addDiagram = (event: FormEvent) => {
+    event.preventDefault();
+    const title = diagramTitle.trim();
+    const source = diagramSource.trim();
+    if (!title || !source) return;
+    if (diagrams.length >= 20) {
+      setDrawingNotice("This whiteboard reached its saved figure limit.");
+      return;
+    }
+    if (source.length > 10_000) {
+      setDrawingNotice("Diagram source must be 10,000 characters or fewer.");
+      return;
+    }
+    onDiagramsChange([...diagrams, {
+      id: `diagram-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      title,
+      source,
+      createdBy: "learner",
+    }]);
+    setDiagramTitle("");
+    setDiagramSource("");
+    setDiagramEditorOpen(false);
+    setDrawingNotice("");
+  };
   return <div className="whiteboard-backdrop" onMouseDown={onClose}>
     <section className="whiteboard" role="dialog" aria-modal="true" aria-label="AI whiteboard" onMouseDown={(event) => event.stopPropagation()}>
       <header className="board-header">
         <div><span className="live-dot"></span><b>Attention, visually</b><small>AI whiteboard · drawing complete</small></div>
-        <div className="board-tools"><IconButton icon="undo" label="Undo" /><IconButton icon="trash" label="Clear whiteboard" /><span className="divider"></span><span className="window-label">WHITEBOARD</span><IconButton icon="close" label="Close whiteboard" onClick={onClose} className="window-close" /></div>
+        <div className="board-tools"><button type="button" className="board-draw-toggle" aria-label={diagramEditorOpen ? "Cancel adding diagram" : "Add diagram"} onClick={() => setDiagramEditorOpen(!diagramEditorOpen)}>{diagramEditorOpen ? "Cancel" : "Add figure"}</button><button type="button" className={`board-draw-toggle${drawingEnabled ? " active" : ""}`} aria-label={drawingEnabled ? "Stop drawing" : "Draw on whiteboard"} onClick={() => setDrawingEnabled(!drawingEnabled)}>Draw</button><IconButton icon="undo" label="Undo" onClick={() => onDrawingChange(drawing.slice(0, -1))} /><IconButton icon="trash" label="Clear whiteboard" onClick={() => { onDrawingChange([]); onDiagramsChange([]); }} /><span className="divider"></span><span className="window-label">WHITEBOARD</span><IconButton icon="close" label="Close whiteboard" onClick={onClose} className="window-close" /></div>
       </header>
       <div className="board-canvas">
-      <span className="board-note note-one">1. Compare the query<br/>with every key</span>
-      <div className="flow-row">
-        <div className="flow-card violet"><span>Q</span><b>Query</b><small>What am I looking for?</small></div>
-        <div className="operator">×</div>
-        <div className="flow-card blue"><span>K</span><b>Keys</b><small>What does each token offer?</small></div>
-        <div className="flow-arrow">→</div>
-        <div className="flow-card amber"><b>Scores</b><div className="score-bars"><i></i><i></i><i></i><i></i></div><small>Similarity</small></div>
+      {diagramEditorOpen && <form className="whiteboard-diagram-editor" onSubmit={addDiagram}>
+        <label>Figure title<input value={diagramTitle} maxLength={160} onChange={(event) => setDiagramTitle(event.currentTarget.value)} required /></label>
+        <label>Mermaid diagram source<textarea aria-label="Mermaid diagram source" value={diagramSource} maxLength={10_000} onChange={(event) => setDiagramSource(event.currentTarget.value)} placeholder={"flowchart TD\n  A[Question] --> B[Answer]"} required /></label>
+        <p>Paste Mermaid source to add a bounded, saved figure. Assistant-generated Mermaid can use this same format.</p>
+        <button type="submit" className="primary-button">Add figure</button>
+      </form>}
+      <div className="whiteboard-diagrams">
+        {diagrams.length === 0 && <p className="whiteboard-empty">No saved figures yet. Add a Mermaid figure or draw on the board.</p>}
+        {diagrams.map((diagram) => (
+          <div className="whiteboard-diagram" key={diagram.id}>
+          <div className="whiteboard-diagram-heading">
+            <b>{diagram.title}</b>
+            <small>{diagram.createdBy === "assistant" ? "PIXIE FIGURE" : diagram.createdBy === "mock" ? "EXAMPLE FIGURE" : "SAVED FIGURE"}</small>
+            <IconButton
+              icon="close"
+              label={`Remove ${diagram.title}`}
+              onClick={() => onDiagramsChange(diagrams.filter((item) => item.id !== diagram.id))}
+            />
+          </div>
+          <Suspense fallback={<p className="whiteboard-figure-loading" role="status">Loading diagram renderer…</p>}>
+            <MermaidFigure source={diagram.source} title={diagram.title} />
+          </Suspense>
+          </div>
+        ))}
       </div>
-      <div className="board-equation"><span>score(Q, K)</span> = <span>QKᵀ</span> / <span>√d<sub>k</sub></span></div>
-      <svg className="hand-arrow" viewBox="0 0 130 90"><path d="M5 11c26 2 65 14 94 51"/><path d="m91 57 10 8-1-13"/></svg>
-      <span className="board-note note-two">2. Scale to keep<br/>gradients stable</span>
-      <div className="output-flow">
-        <div className="flow-card green"><b>Attention weights</b><div className="weight-pills"><i>0.1</i><i>0.7</i><i>0.2</i></div></div>
-        <div className="operator">×</div>
-        <div className="flow-card coral"><span>V</span><b>Values</b></div>
-        <div className="flow-arrow">→</div>
-        <div className="flow-card result"><Icon name="sparkle" /><b>Context-aware output</b><small>The useful information is combined</small></div>
-      </div>
-        <div className="board-legend"><span><i className="violet-dot"></i>Current step</span><span><i className="green-dot"></i>Result</span><small>Tip: drag to pan · scroll to zoom</small></div>
+      {drawingNotice && <p className="whiteboard-notice" role="status">{drawingNotice}</p>}
+      <svg
+        ref={drawingSvg}
+        className={`whiteboard-drawing${drawingEnabled ? " is-enabled" : ""}`}
+        viewBox="0 0 1000 600"
+        preserveAspectRatio="none"
+        aria-label="Learner whiteboard drawing"
+        onPointerDown={beginStroke}
+        onPointerMove={addPoint}
+        onPointerUp={endStroke}
+        onPointerCancel={endStroke}
+      >
+        {visibleDrawing.map((stroke, index) => (
+          <polyline
+            key={index}
+            points={stroke.points.map((point) => `${point.x * 1000},${point.y * 600}`).join(" ")}
+            fill="none"
+            stroke={stroke.color}
+            strokeWidth={stroke.width}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
+        <div className="board-legend"><span><i className="violet-dot"></i>Saved figures</span><span><i className="green-dot"></i>Learner drawing</span><small>Tip: drag to draw when drawing is enabled</small></div>
       </div>
     </section>
     </div>
@@ -138,11 +264,13 @@ export function QuizModal({ state, setState, onClose }: { state: TeacherState; s
   </div>;
 }
 
-export function TeacherPanel({ state, setState, onResizeStart, selectionContext }: {
+export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, onTranscriptChange }: {
   state: TeacherState
   setState: (s: TeacherState) => void
   onResizeStart: () => void
   selectionContext: { text: string; pageIndex: number } | null
+  transcript: TranscriptMessage[]
+  onTranscriptChange: (messages: TranscriptMessage[]) => void
 }) {
   const [input, setInput] = useState("");
   const [muted, setMuted] = useState(false);
@@ -152,7 +280,22 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext 
       setInput(`Explain this passage from page ${selectionContext.pageIndex + 1}: "${selectionContext.text}"`);
     }
   }, [selectionContext]);
-  const submit = (event: FormEvent) => { event.preventDefault(); if (input.trim()) { setState("question"); setInput(""); } };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const question = input.trim();
+    if (!question) return;
+    onTranscriptChange([
+      ...transcript,
+      { role: "user", text: question, pageIndex: selectionContext?.pageIndex ?? null },
+      {
+        role: "assistant",
+        text: "As the key dimension grows, the dot product sums more terms. Its values spread farther apart, pushing softmax toward near-zero or near-one outputs. The scaling term brings those values back into a useful range, preserving uncertainty where the model still needs to learn.",
+        pageIndex: selectionContext?.pageIndex ?? null,
+      },
+    ]);
+    setState("question");
+    setInput("");
+  };
   return <aside className="teacher-panel">
     <span className="teacher-resize-handle" role="separator" aria-label="Resize teacher panel" onPointerDown={onResizeStart} />
     {state === "paused" ? <div className="teacher-content centered-state">
@@ -165,13 +308,25 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext 
         <button className="primary-button" onClick={() => setState("teaching")}>Review this section</button><button className="secondary-button">Continue to Multi-Head Attention <Icon name="chevron" /></button>
       </div> :
       <div className="teacher-content">
-        {state === "question" && <div className="user-question"><small>{selectionContext ? `SELECTED FROM PAGE ${selectionContext.pageIndex + 1}` : "YOU ASKED"}</small><p>{selectionContext?.text || "Why does softmax become too confident without scaling?"}</p></div>}
+        {transcript.length > 0 ? (
+          <div className="teacher-transcript" role="log" aria-label="Tutor conversation">
+            {transcript.map((message, index) => (
+              <div className={`transcript-message transcript-${message.role}`} key={`${index}-${message.role}`}>
+                <small>{message.role === "user" ? "YOU" : "PIXIE"}{message.pageIndex !== null ? ` · PAGE ${message.pageIndex + 1}` : ""}</small>
+                <p>{message.text}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <>
         <div className="speaking-label"><span className="audio-bars"><i></i><i></i><i></i><i></i></span>{state === "question" ? "ANSWERING YOUR QUESTION" : "EXPLAINING HIGHLIGHTED PASSAGE"}</div>
         <h2>{state === "question" ? "It’s about keeping the signal balanced." : "Let’s break down this equation."}</h2>
         <p>{state === "question" ? "As the key dimension grows, the dot product sums more terms. Its values spread farther apart, pushing softmax toward near-zero or near-one outputs." : "The query and key vectors determine how strongly two tokens relate to each other. Think of the query as what we’re looking for, and each key as a label describing what a token contains."}</p>
         <p>{state === "question" ? "The scaling term brings those values back into a useful range, preserving uncertainty where the model still needs to learn." : <>The scaling term <span className="inline-math">√d<sub>k</sub></span> keeps the dot products in a useful range. Without it, softmax can become overly confident as the vectors get larger.</>}</p>
         <div className="reference-pill"><span>PAGE {selectionContext ? selectionContext.pageIndex + 1 : 3}</span><b>{selectionContext ? `“${selectionContext.text}”` : <>“divide each by √d<sub>k</sub>...”</>}</b><Icon name="chevron" /></div>
         {state === "question" && <button className="back-explanation" onClick={() => setState("teaching")}><Icon name="previous" /> Return to explanation</button>}
+          </>
+        )}
       </div>}
     <div className="teacher-input-area">
       {addMenuOpen && <div className="add-menu" role="menu"><button role="menuitem" onClick={() => setAddMenuOpen(false)}><Icon name="upload" />Attach file</button><button role="menuitem" onClick={() => setAddMenuOpen(false)}><Icon name="expand" />Add screenshot</button><button role="menuitem" onClick={() => { setInput("Use the current page as context"); setAddMenuOpen(false); }}><Icon name="file" />Reference current page</button><button role="menuitem" onClick={() => { setInput("Save this as a note: "); setAddMenuOpen(false); }}><Icon name="note" />Add note</button></div>}
@@ -180,11 +335,14 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext 
   </aside>;
 }
 
-export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, captionTransparency, setCaptionTransparency, captionContrast, setCaptionContrast, learningDocument, onOpenDocument, onBrowseLibrary }: { openFloating: () => void; captionsEnabled: boolean; setCaptionsEnabled: (enabled: boolean) => void; captionTransparency: number; setCaptionTransparency: (value: number) => void; captionContrast: number; setCaptionContrast: (value: number) => void; learningDocument?: LearningDocument | null; onOpenDocument: (document: LearningDocument) => void; onBrowseLibrary: () => void }) {
+export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, captionTransparency, setCaptionTransparency, captionContrast, setCaptionContrast, learningDocument, learningState, onWorkspaceChange, onWorkspaceCheckpoint, onOpenDocument, onBrowseLibrary }: { openFloating: () => void; captionsEnabled: boolean; setCaptionsEnabled: (enabled: boolean) => void; captionTransparency: number; setCaptionTransparency: (value: number) => void; captionContrast: number; setCaptionContrast: (value: number) => void; learningDocument?: LearningDocument | null; learningState?: DocumentLearningState | null; onWorkspaceChange: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onWorkspaceCheckpoint: (document: LearningDocument, state: { pageIndex: number; zoom: number; workspaceState: WorkspaceState }) => void; onOpenDocument: (document: LearningDocument) => void; onBrowseLibrary: () => void }) {
   const [teacherState, setTeacherState] = useState<TeacherState>("teaching");
   const [boardOpen, setBoardOpen] = useState(false);
+  const [whiteboardDrawing, setWhiteboardDrawing] = useState<WhiteboardStroke[]>([]);
+  const [whiteboardDiagrams, setWhiteboardDiagrams] = useState<WhiteboardDiagram[]>([]);
   const [zoom, setZoom] = useState(84);
-  const [currentPage, setCurrentPage] = useState(3);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
   const [teacherWidth, setTeacherWidth] = useState(350);
   const [captionControlsVisible, setCaptionControlsVisible] = useState(false);
   const captionControlsTimer = useRef<number | undefined>(undefined);
@@ -194,6 +352,10 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   const [searchScope, setSearchScope] = useState<"page" | "document">("document");
   const [selectionContext, setSelectionContext] = useState<{ text: string; pageIndex: number } | null>(null);
   const resizing = useRef(false);
+  const restoringState = useRef(false);
+  const persistedSnapshot = useRef("");
+  const onWorkspaceChangeRef = useRef(onWorkspaceChange);
+  onWorkspaceChangeRef.current = onWorkspaceChange;
   useEffect(() => {
     const resize = (event: PointerEvent) => {
       if (!resizing.current) return;
@@ -236,6 +398,34 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     window.clearTimeout(captionControlsTimer.current);
     captionControlsTimer.current = window.setTimeout(() => setCaptionControlsVisible(false), 350);
   };
+  const makeWorkspaceSnapshot = (overrides: Partial<WorkspaceState> = {}) => ({
+    pageIndex: currentPage - 1,
+    zoom,
+    workspaceState: {
+      teacherState,
+      selectionContext,
+      transcript,
+      whiteboardOpen: boardOpen,
+      whiteboardDrawing,
+      whiteboardDiagrams,
+      captionsEnabled,
+      captionTransparency,
+      captionContrast,
+      ...overrides,
+    },
+  });
+  const checkpoint = (overrides: Partial<WorkspaceState> = {}) => {
+    if (!learningDocument) return;
+    const snapshot = makeWorkspaceSnapshot(overrides);
+    persistedSnapshot.current = JSON.stringify(snapshot);
+    onWorkspaceCheckpoint(learningDocument, snapshot);
+  };
+  const changeTeacherState = (nextState: TeacherState) => {
+    setTeacherState(nextState);
+    if (nextState === "paused" || nextState === "complete") {
+      checkpoint({ teacherState: nextState });
+    }
+  };
   const moveSearch = (direction: number) => {
     if (!searchOccurrences.length) return;
     const nextIndex = (searchIndex + direction + searchOccurrences.length) % searchOccurrences.length;
@@ -244,8 +434,74 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     setCurrentPage(searchOccurrences[nextIndex].page);
   };
   useEffect(() => {
-    if (learningDocument) setCurrentPage(1);
+    if (!learningDocument) return;
+    restoringState.current = true;
+    const saved = learningState?.documentId === learningDocument.id ? learningState : null;
+    const initialWorkspaceState = createInitialWorkspaceState(appConfig.showMockExamples);
+    setCurrentPage(saved ? saved.pageIndex + 1 : 1);
+    setZoom(saved?.zoom ?? 84);
+    const workspace = saved?.workspaceState;
+    setTeacherState(workspace?.teacherState ?? "teaching");
+    setSelectionContext(workspace?.selectionContext ?? null);
+    setTranscript(workspace?.transcript ?? []);
+    setBoardOpen(workspace?.whiteboardOpen ?? false);
+    setWhiteboardDrawing(workspace?.whiteboardDrawing ?? []);
+    setWhiteboardDiagrams(
+      workspace?.whiteboardDiagrams?.length
+        ? workspace.whiteboardDiagrams
+        : saved?.hasSavedState
+          ? []
+          : initialWorkspaceState.whiteboardDiagrams,
+    );
+    setCaptionsEnabled(workspace?.captionsEnabled ?? false);
+    setCaptionTransparency(workspace?.captionTransparency ?? 18);
+    setCaptionContrast(workspace?.captionContrast ?? 100);
+    const restored = {
+      pageIndex: saved?.pageIndex ?? 0,
+      zoom: saved?.zoom ?? 84,
+      workspaceState: {
+        ...(workspace ?? initialWorkspaceState),
+        whiteboardDiagrams: workspace?.whiteboardDiagrams?.length
+          ? workspace.whiteboardDiagrams
+          : saved?.hasSavedState
+            ? []
+            : initialWorkspaceState.whiteboardDiagrams,
+      },
+    };
+    persistedSnapshot.current = JSON.stringify(restored);
   }, [learningDocument?.id]);
+  useEffect(() => {
+    const workspace = learningState?.workspaceState;
+    if (workspace?.whiteboardOpen !== undefined) {
+      setBoardOpen((current) => current === workspace.whiteboardOpen ? current : workspace.whiteboardOpen);
+    }
+    if (workspace?.whiteboardDrawing) {
+      setWhiteboardDrawing((current) =>
+        JSON.stringify(current) === JSON.stringify(workspace.whiteboardDrawing)
+          ? current
+          : workspace.whiteboardDrawing,
+      );
+    }
+    if (workspace?.whiteboardDiagrams) {
+      setWhiteboardDiagrams((current) =>
+        JSON.stringify(current) === JSON.stringify(workspace.whiteboardDiagrams)
+          ? current
+          : workspace.whiteboardDiagrams,
+      );
+    }
+  }, [learningState?.workspaceState.whiteboardOpen, learningState?.workspaceState.whiteboardDrawing, learningState?.workspaceState.whiteboardDiagrams]);
+  useEffect(() => {
+    if (!learningDocument) return;
+    if (restoringState.current) {
+      restoringState.current = false;
+      return;
+    }
+    const next = makeWorkspaceSnapshot();
+    const serialized = JSON.stringify(next);
+    if (persistedSnapshot.current === serialized) return;
+    persistedSnapshot.current = serialized;
+    onWorkspaceChangeRef.current(learningDocument, next);
+  }, [learningDocument?.id, currentPage, zoom, teacherState, selectionContext, transcript, boardOpen, whiteboardDrawing, whiteboardDiagrams, captionsEnabled, captionTransparency, captionContrast]);
   if (!learningDocument) return <LearningDocumentChooser onOpenDocument={onOpenDocument} onBrowseLibrary={onBrowseLibrary} />;
   const pageCount = learningDocument.pageCount;
   const setDocumentPage = (page: number) => {
@@ -273,18 +529,18 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
         </Suspense>
         {captionsEnabled && <LiveCaptions transparency={captionTransparency} contrast={captionContrast} />}
       </section>
-      <TeacherPanel state={teacherState} setState={setTeacherState} selectionContext={selectionContext} onResizeStart={() => {
+      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} onTranscriptChange={setTranscript} onResizeStart={() => {
         resizing.current = true;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
       }} />
     </div>
-    {boardOpen && <Whiteboard onClose={() => setBoardOpen(false)} />}
+    {boardOpen && <Whiteboard onClose={() => { setBoardOpen(false); checkpoint({ whiteboardOpen: false }); }} drawing={whiteboardDrawing} onDrawingChange={setWhiteboardDrawing} diagrams={whiteboardDiagrams} onDiagramsChange={setWhiteboardDiagrams} />}
     <footer className="lesson-controls">
       <div className="lesson-main-controls">
         <IconButton icon="previous" label="Previous page" onClick={() => setDocumentPage(currentPage - 1)} />
-        <button className="play-control" onClick={() => setTeacherState(teacherState === "paused" ? "teaching" : "paused")} aria-label={teacherState === "paused" ? "Resume lesson" : "Pause lesson"}><Icon name={teacherState === "paused" ? "play" : "pause"} /></button>
-        <IconButton icon="stop" label="End lesson" onClick={() => setTeacherState("complete")} />
+        <button className="play-control" onClick={() => changeTeacherState(teacherState === "paused" ? "teaching" : "paused")} aria-label={teacherState === "paused" ? "Resume lesson" : "Pause lesson"}><Icon name={teacherState === "paused" ? "play" : "pause"} /></button>
+        <IconButton icon="stop" label="End lesson" onClick={() => changeTeacherState("complete")} />
         <IconButton icon="next" label="Next page" onClick={() => setDocumentPage(currentPage + 1)} />
       </div>
       <div className="lesson-actions">
@@ -296,7 +552,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
       <div className="lesson-progress"><div><span>PAGE {currentPage} OF {pageCount}</span><b>{learningDocument.filename}</b></div><div className="progress-track"><i style={{ width: `${(currentPage / pageCount) * 100}%` }}></i><span style={{ left: `${(currentPage / pageCount) * 100}%` }}></span></div><small>{currentPage === pageCount ? "Final page" : `${pageCount - currentPage} pages remaining`}</small></div>
       <div className="lesson-toggles"><button className={boardOpen ? "active" : ""} onClick={() => setBoardOpen(!boardOpen)}><Icon name="board" />Whiteboard</button><div className="caption-toggle-control" onMouseEnter={showCaptionControls} onMouseLeave={hideCaptionControls} onFocus={showCaptionControls}><button className={captionsEnabled ? "active" : ""} onClick={() => setCaptionsEnabled(!captionsEnabled)} aria-pressed={captionsEnabled} aria-label={captionsEnabled ? "Hide captions" : "Show captions"} title={captionsEnabled ? "Hide captions" : "Show captions"}><Icon name="cc" /></button>{captionsEnabled && <div className={`caption-controls ${captionControlsVisible ? "visible" : ""}`} aria-label="Caption appearance controls" onMouseEnter={showCaptionControls}><label>Contrast <input type="range" min="70" max="140" value={captionContrast} onChange={(event) => setCaptionContrast(Number(event.target.value))} /></label><label>Transparency <input type="range" min="0" max="70" value={captionTransparency} onChange={(event) => setCaptionTransparency(Number(event.target.value))} /></label></div>}</div></div>
     </footer>
-    {(teacherState === "quiz" || teacherState === "feedback") && <QuizModal state={teacherState} setState={setTeacherState} onClose={() => setTeacherState("teaching")} />}
+    {(teacherState === "quiz" || teacherState === "feedback") && <QuizModal state={teacherState} setState={changeTeacherState} onClose={() => changeTeacherState("teaching")} />}
   </main>;
 }
 

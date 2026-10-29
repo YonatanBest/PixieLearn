@@ -18,7 +18,7 @@ from app.dependencies.ownership import assert_resource_owner
 from app.document_queue import QueueUnavailableError, get_document_queue
 from app.database import Base, get_db
 from app.main import app
-from app.models import DocumentPageRecord, DocumentRecord
+from app.models import DocumentLearningStateRecord, DocumentPageRecord, DocumentRecord
 from app.schemas.auth import AuthUser
 from app.storage import StorageUnavailableError, get_document_storage
 
@@ -612,6 +612,15 @@ def test_owner_can_delete_document_and_its_rendition_and_page_text(document_api)
                 extractor_version="1",
             )
         )
+        session.add(
+            DocumentLearningStateRecord(
+                document_id=document_id,
+                page_index=0,
+                zoom=84,
+                workspace_state={"transcript": [{"role": "user", "text": "private"}]},
+                last_opened_at=datetime.now(UTC),
+            )
+        )
         session.commit()
 
     response = client.delete(f"/api/documents/{document_id}")
@@ -623,6 +632,7 @@ def test_owner_can_delete_document_and_its_rendition_and_page_text(document_api)
         assert session.scalar(
             select(DocumentPageRecord).where(DocumentPageRecord.document_id == document_id)
         ) is None
+        assert session.get(DocumentLearningStateRecord, document_id) is None
 
 
 def test_document_deletion_is_owner_scoped(document_api, monkeypatch) -> None:
@@ -690,14 +700,133 @@ def test_document_deletion_can_be_retried_after_storage_failure(document_api) ->
     with sessions() as session:
         assert session.get(DocumentRecord, document_id) is None
 
+
+def test_document_learning_state_persists_progress_transcript_and_drawing(document_api) -> None:
+    client, _storage, sessions = document_api
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="lecture.pdf",
+                content_type="application/pdf",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                status="ready",
+                page_count=4,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    payload = {
+        "pageIndex": 2,
+        "zoom": 100,
+        "workspaceState": {
+            "teacherState": "question",
+            "selectionContext": {"text": "A selected passage", "pageIndex": 2},
+            "transcript": [
+                {"role": "user", "text": "Explain this passage", "pageIndex": 2},
+                {"role": "assistant", "text": "Here is the explanation.", "pageIndex": 2},
+            ],
+            "whiteboardOpen": True,
+            "whiteboardDrawing": [{
+                "points": [{"x": 0.1, "y": 0.2}, {"x": 0.8, "y": 0.7}],
+                "color": "#6f62d9",
+                "width": 3,
+            }],
+            "whiteboardDiagrams": [{
+                "id": "diagram-1",
+                "title": "Attention flow",
+                "source": "flowchart LR\n A --> B",
+                "createdBy": "assistant",
+            }],
+            "captionsEnabled": True,
+            "captionTransparency": 20,
+            "captionContrast": 110,
+        },
+    }
+
+    saved = client.put(f"/api/documents/{document_id}/learning-state", json=payload)
+
+    assert saved.status_code == 200
+    assert saved.json()["pageIndex"] == 2
+    assert saved.json()["zoom"] == 100
+    assert saved.json()["workspaceState"] == payload["workspaceState"]
+    resumed = client.get(f"/api/documents/{document_id}/learning-state")
+    assert resumed.status_code == 200
+    assert resumed.json()["workspaceState"]["transcript"] == payload["workspaceState"]["transcript"]
+    assert resumed.json()["workspaceState"]["whiteboardDrawing"] == payload["workspaceState"]["whiteboardDrawing"]
+    assert resumed.json()["workspaceState"]["whiteboardDiagrams"] == payload["workspaceState"]["whiteboardDiagrams"]
+
+    progress = client.get("/api/documents/learning-progress")
+    assert progress.status_code == 200
+    assert progress.json() == [{
+        "documentId": str(document_id),
+        "pageIndex": 2,
+        "pageCount": 4,
+        "zoom": 100,
+        "lastOpenedAt": saved.json()["lastOpenedAt"],
+    }]
+    assert "workspaceState" not in progress.json()[0]
+
+
+def test_document_learning_state_is_private_and_rejects_out_of_range_pages(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id="learner-1",
+                filename="lecture.pdf",
+                content_type="application/pdf",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                status="ready",
+                page_count=2,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+
+    payload = {
+        "pageIndex": 2,
+        "zoom": 84,
+        "workspaceState": {},
+    }
+    out_of_range = client.put(f"/api/documents/{document_id}/learning-state", json=payload)
+    assert out_of_range.status_code == 422
+
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        require_authenticated_user,
+        lambda: AuthUser(id="learner-2", name="Sam Student", email="sam@example.com"),
+    )
+    assert client.get(f"/api/documents/{document_id}/learning-state").status_code == 404
+    assert client.put(
+        f"/api/documents/{document_id}/learning-state",
+        json={**payload, "pageIndex": 0},
+    ).status_code == 404
+    assert client.get("/api/documents/learning-progress").json() == []
+
 def test_document_routes_reject_unauthenticated_requests(document_api, monkeypatch) -> None:
     client, _storage, _sessions = document_api
     monkeypatch.delitem(app.dependency_overrides, require_authenticated_user)
 
-    response = client.get("/api/documents")
+    responses = [
+        client.get("/api/documents"),
+        client.get("/api/documents/learning-progress"),
+        client.get(f"/api/documents/{uuid4()}/learning-state"),
+        client.put(
+            f"/api/documents/{uuid4()}/learning-state",
+            json={"pageIndex": 0, "zoom": 84, "workspaceState": {}},
+        ),
+    ]
 
-    assert response.status_code == 401
-    assert response.json()["code"] == "UNAUTHENTICATED"
+    assert all(response.status_code == 401 for response in responses)
+    assert all(response.json()["code"] == "UNAUTHENTICATED" for response in responses)
 
 
 def test_learning_pdf_rejects_unauthenticated_requests(document_api, monkeypatch) -> None:

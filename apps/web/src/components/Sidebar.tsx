@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Icon, IconButton, type IconName } from "./Icon";
 
-export type View = "workspace" | "home" | "settings";
+export type View = "workspace" | "home" | "learning" | "settings";
 
 export function Sidebar({ view, setView, onNewSession, collapsed, setCollapsed, theme, toggleTheme, onLogout }: { view: View; setView: (v: View) => void; onNewSession: () => void; collapsed: boolean; setCollapsed: (v: boolean) => void; theme: "dark" | "light"; toggleTheme: () => void; onLogout: () => void }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const items: { icon: IconName; label: string; value: View | "notes" }[] = [
     { icon: "home", label: "Home", value: "home" },
-    { icon: "book", label: "My learning", value: "workspace" },
+    { icon: "book", label: "My learning", value: "learning" },
     { icon: "note", label: "Saved notes", value: "notes" },
   ];
   return <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
@@ -19,7 +19,7 @@ export function Sidebar({ view, setView, onNewSession, collapsed, setCollapsed, 
     <button className="new-session" onClick={onNewSession}><Icon name="plus" />{!collapsed && <span>New learning session</span>}</button>
     <nav className="main-nav" aria-label="Main navigation">
       {items.map((item) => <button key={item.label} className={`nav-item ${item.value === view ? "active" : ""}`} onClick={() => item.value !== "notes" && setView(item.value)}>
-        <Icon name={item.icon} /><span>{item.label}</span>{!collapsed && item.value === "workspace" && <span className="count">3</span>}
+        <Icon name={item.icon} /><span>{item.label}</span>
       </button>)}
     </nav>
     {!collapsed && <div className="recent">
@@ -40,4 +40,3 @@ export function Sidebar({ view, setView, onNewSession, collapsed, setCollapsed, 
     </div>
   </aside>;
 }
-

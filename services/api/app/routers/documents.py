@@ -18,9 +18,17 @@ from app.config import Settings, get_settings
 from app.database import get_db
 from app.dependencies.auth import require_authenticated_user
 from app.document_queue import DocumentQueue, QueueUnavailableError, get_document_queue
-from app.models import DocumentPageRecord, DocumentRecord
+from app.models import DocumentLearningStateRecord, DocumentPageRecord, DocumentRecord
 from app.schemas.auth import AuthUser
-from app.schemas.documents import DocumentPageTextRead, DocumentRead, DownloadUrlRead
+from app.schemas.documents import (
+    DocumentLearningStateRead,
+    DocumentLearningStateWrite,
+    DocumentPageTextRead,
+    DocumentRead,
+    DownloadUrlRead,
+    LearningProgressRead,
+    WorkspaceState,
+)
 from app.storage import DocumentStorage, StorageUnavailableError, get_document_storage
 
 logger = logging.getLogger("pixielearn.api.documents")
@@ -153,6 +161,106 @@ def list_documents(
             .where(DocumentRecord.owner_id == user.id)
             .order_by(DocumentRecord.created_at.desc())
         )
+    )
+
+
+@router.get("/learning-progress", response_model=list[LearningProgressRead])
+def list_learning_progress(
+    user: AuthUser = Depends(require_authenticated_user),
+    session: Session = Depends(get_db),
+) -> list[LearningProgressRead]:
+    records = session.execute(
+        select(DocumentLearningStateRecord, DocumentRecord.page_count)
+        .join(DocumentRecord, DocumentRecord.id == DocumentLearningStateRecord.document_id)
+        .where(DocumentRecord.owner_id == user.id, DocumentRecord.status == "ready")
+        .order_by(DocumentLearningStateRecord.last_opened_at.desc())
+    )
+    return [
+        LearningProgressRead(
+            document_id=record.document_id,
+            page_index=record.page_index,
+            page_count=page_count,
+            zoom=record.zoom,
+            last_opened_at=record.last_opened_at,
+        )
+        for record, page_count in records
+        if page_count is not None
+    ]
+
+
+@router.get(
+    "/{document_id}/learning-state",
+    response_model=DocumentLearningStateRead,
+)
+def get_document_learning_state(
+    document_id: str,
+    user: AuthUser = Depends(require_authenticated_user),
+    session: Session = Depends(get_db),
+) -> DocumentLearningStateRead:
+    document = _document_or_404(session, document_id, user.id)
+    if document.status != "ready" or document.page_count is None:
+        raise HTTPException(status_code=409, detail="Document learning state is not available yet.")
+    saved = session.get(DocumentLearningStateRecord, document.id)
+    if saved is None:
+        return DocumentLearningStateRead(
+            document_id=document.id,
+            page_index=0,
+            page_count=document.page_count,
+            zoom=84,
+            last_opened_at=document.created_at,
+            has_saved_state=False,
+            workspace_state=WorkspaceState(),
+        )
+    return DocumentLearningStateRead(
+        document_id=saved.document_id,
+        page_index=min(saved.page_index, document.page_count - 1),
+        page_count=document.page_count,
+        zoom=saved.zoom,
+        last_opened_at=saved.last_opened_at,
+        has_saved_state=True,
+        workspace_state=WorkspaceState.model_validate(saved.workspace_state),
+    )
+
+
+@router.put(
+    "/{document_id}/learning-state",
+    response_model=DocumentLearningStateRead,
+)
+def save_document_learning_state(
+    document_id: str,
+    payload: DocumentLearningStateWrite,
+    user: AuthUser = Depends(require_authenticated_user),
+    session: Session = Depends(get_db),
+) -> DocumentLearningStateRead:
+    document = _document_or_404(session, document_id, user.id)
+    if document.status != "ready" or document.page_count is None:
+        raise HTTPException(status_code=409, detail="Document learning state is not available yet.")
+    if payload.page_index >= document.page_count:
+        raise HTTPException(status_code=422, detail="The saved page is outside this document.")
+
+    now = datetime.now(UTC)
+    saved = session.get(DocumentLearningStateRecord, document.id)
+    if saved is None:
+        saved = DocumentLearningStateRecord(document_id=document.id)
+        session.add(saved)
+    saved.page_index = payload.page_index
+    saved.zoom = payload.zoom
+    saved.workspace_state = payload.workspace_state.model_dump(mode="json", by_alias=True)
+    saved.last_opened_at = now
+    try:
+        session.commit()
+    except SQLAlchemyError as error:
+        session.rollback()
+        raise HTTPException(status_code=500, detail="Could not save document learning state.") from error
+
+    return DocumentLearningStateRead(
+        document_id=saved.document_id,
+        page_index=saved.page_index,
+        page_count=document.page_count,
+        zoom=saved.zoom,
+        last_opened_at=saved.last_opened_at,
+        has_saved_state=True,
+        workspace_state=WorkspaceState.model_validate(saved.workspace_state),
     )
 
 
@@ -310,6 +418,11 @@ def delete_document(
             detail="Document cleanup is incomplete. Retry deletion.",
         ) from error
 
+    session.execute(
+        delete(DocumentLearningStateRecord).where(
+            DocumentLearningStateRecord.document_id == document.id,
+        )
+    )
     session.execute(delete(DocumentPageRecord).where(DocumentPageRecord.document_id == document.id))
     session.execute(
         delete(DocumentRecord).where(
