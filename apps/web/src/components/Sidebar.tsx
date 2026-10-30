@@ -1,12 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon, IconButton, type IconName } from "./Icon";
 import type { AuthUser } from "../features/auth/types";
+import { createAvatarImage } from "../features/auth/avatar";
 import type { RecentLearningDocument } from "../features/documents/learningProgress";
 
 export type View = "workspace" | "home" | "learning" | "settings";
 
-export function Sidebar({ user, view, setView, collapsed, setCollapsed, theme, toggleTheme, onLogout, recentDocuments, activeDocumentId, onOpenRecentDocument }: { user: AuthUser; view: View; setView: (v: View) => void; collapsed: boolean; setCollapsed: (v: boolean) => void; theme: "dark" | "light"; toggleTheme: () => void; onLogout: () => void; recentDocuments: RecentLearningDocument[]; activeDocumentId: string | null; onOpenRecentDocument: (document: RecentLearningDocument) => void }) {
+export function Sidebar({ user, onAvatarChange, view, setView, collapsed, setCollapsed, theme, toggleTheme, onLogout, recentDocuments, activeDocumentId, onOpenRecentDocument }: { user: AuthUser; onAvatarChange: (image: string | null) => Promise<void>; view: View; setView: (v: View) => void; collapsed: boolean; setCollapsed: (v: boolean) => void; theme: "dark" | "light"; toggleTheme: () => void; onLogout: () => void; recentDocuments: RecentLearningDocument[]; activeDocumentId: string | null; onOpenRecentDocument: (document: RecentLearningDocument) => void }) {
   const [profileOpen, setProfileOpen] = useState(false);
+  const [avatarError, setAvatarError] = useState("");
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const avatarInput = useRef<HTMLInputElement>(null);
   const [isNarrow, setIsNarrow] = useState(() => window.innerWidth <= 1220);
   const [responsiveExpanded, setResponsiveExpanded] = useState(false);
   const initials = user.name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("")
@@ -25,6 +29,30 @@ export function Sidebar({ user, view, setView, collapsed, setCollapsed, theme, t
   const toggleSidebar = () => {
     if (isNarrow) setResponsiveExpanded((current) => !current);
     else setCollapsed(!collapsed);
+  };
+  const uploadAvatar = async (file: File | undefined) => {
+    if (!file) return;
+    setAvatarError("");
+    setAvatarUploading(true);
+    try {
+      await onAvatarChange(await createAvatarImage(file));
+    } catch (reason) {
+      setAvatarError(reason instanceof Error ? reason.message : "Profile picture could not be updated.");
+    } finally {
+      setAvatarUploading(false);
+      if (avatarInput.current) avatarInput.current.value = "";
+    }
+  };
+  const removeAvatar = async () => {
+    setAvatarError("");
+    setAvatarUploading(true);
+    try {
+      await onAvatarChange(null);
+    } catch (reason) {
+      setAvatarError(reason instanceof Error ? reason.message : "Profile picture could not be removed.");
+    } finally {
+      setAvatarUploading(false);
+    }
   };
   const items: { icon: IconName; label: string; value: View | "notes" }[] = [
     { icon: "home", label: "Home", value: "home" },
@@ -70,7 +98,23 @@ export function Sidebar({ user, view, setView, collapsed, setCollapsed, theme, t
             : <span className="avatar">{initials}</span>}
           <span><b>{user.name}</b><small>{user.email}</small></span>
         </button>
-        {profileOpen && <div className="profile-menu" role="menu"><button role="menuitem" onClick={onLogout}>Log out</button></div>}
+        {profileOpen && <div className="profile-menu" role="menu">
+          <button role="menuitem" type="button" disabled={avatarUploading} onClick={() => avatarInput.current?.click()}>
+            {avatarUploading ? "Updating picture…" : "Change profile picture"}
+          </button>
+          <input
+            ref={avatarInput}
+            className="visually-hidden"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            aria-label="Upload profile picture"
+            onChange={(event) => void uploadAvatar(event.currentTarget.files?.[0])}
+          />
+          <small className="profile-upload-hint">JPEG, PNG or WebP · max 100 KB</small>
+          {avatarError && <span className="profile-upload-error" role="alert">{avatarError}</span>}
+          {user.avatarUrl && <button role="menuitem" type="button" disabled={avatarUploading} onClick={() => void removeAvatar()}>Remove profile picture</button>}
+          <button role="menuitem" type="button" onClick={onLogout}>Log out</button>
+        </div>}
       </div>
     </div>
   </aside>;

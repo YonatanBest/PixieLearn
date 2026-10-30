@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthUser } from "../features/auth/types";
 import { Sidebar } from "./Sidebar";
 
@@ -32,6 +32,7 @@ describe("sidebar account profile", () => {
       root.render(
         <Sidebar
           user={user}
+          onAvatarChange={async () => undefined}
           view="home"
           setView={() => undefined}
           collapsed={false}
@@ -57,6 +58,7 @@ describe("sidebar account profile", () => {
       root.render(
         <Sidebar
           user={{ id: "user-99", name: "Riley", email: "riley@example.com" }}
+          onAvatarChange={async () => undefined}
           view="home"
           setView={() => undefined}
           collapsed={false}
@@ -79,6 +81,7 @@ describe("sidebar account profile", () => {
       root.render(
         <Sidebar
           user={{ id: "user-99", name: "Riley", email: "riley@example.com" }}
+          onAvatarChange={async () => undefined}
           view="home"
           setView={() => undefined}
           collapsed={false}
@@ -107,6 +110,7 @@ describe("sidebar account profile", () => {
       root.render(
         <Sidebar
           user={{ id: "user-99", name: "Riley", email: "riley@example.com" }}
+          onAvatarChange={async () => undefined}
           view="home"
           setView={() => undefined}
           collapsed
@@ -134,5 +138,40 @@ describe("sidebar account profile", () => {
     expect(container.querySelector(".sidebar")?.classList.contains("collapsed")).toBe(true);
     expect(container.querySelector(".sidebar")?.classList.contains("responsive-expanded")).toBe(false);
     Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+  });
+
+  it("rejects profile pictures larger than 100 KB", async () => {
+    const onAvatarChange = vi.fn(async () => undefined);
+    await act(async () => {
+      root.render(
+        <Sidebar
+          user={{ id: "user-99", name: "Riley", email: "riley@example.com" }}
+          onAvatarChange={onAvatarChange}
+          view="home"
+          setView={() => undefined}
+          collapsed={false}
+          setCollapsed={() => undefined}
+          theme="dark"
+          toggleTheme={() => undefined}
+          onLogout={() => undefined}
+          recentDocuments={[]}
+          activeDocumentId={null}
+          onOpenRecentDocument={() => undefined}
+        />,
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".profile")?.click();
+    });
+    const input = container.querySelector<HTMLInputElement>("[aria-label='Upload profile picture']")!;
+    const file = new File([new Uint8Array(100 * 1024 + 1)], "large.png", { type: "image/png" });
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("Profile pictures must be 100 KB or smaller.");
+    expect(onAvatarChange).not.toHaveBeenCalled();
   });
 });

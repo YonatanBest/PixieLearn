@@ -23,6 +23,7 @@ export interface AuthService {
   getSession(): Promise<AuthUser | null>;
   login(credentials: LoginCredentials): Promise<AuthUser>;
   signup(credentials: SignupCredentials): Promise<AuthUser>;
+  updateAvatar(image: string | null): Promise<AuthUser>;
   loginWithGoogle(): Promise<AuthUser | null>;
   requestPasswordReset(email: string): Promise<void>;
   logout(): Promise<void>;
