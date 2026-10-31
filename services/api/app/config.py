@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     tesseract_binary: str = "tesseract"
     document_ocr_language: str = "eng"
     document_ocr_dpi: int = Field(default=300, ge=72, le=600)
+    ai_chat_completions_url: str | None = None
+    ai_api_key: str | None = None
+    ai_model: str | None = None
+    ai_request_timeout_seconds: float = Field(default=30.0, ge=1, le=120)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

@@ -1,7 +1,8 @@
 import httpx
+import json
 import logging
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException
@@ -18,7 +19,10 @@ from app.dependencies.ownership import assert_resource_owner
 from app.document_queue import QueueUnavailableError, get_document_queue
 from app.database import Base, get_db
 from app.main import app
-from app.models import DocumentLearningStateRecord, DocumentPageRecord, DocumentRecord, UserSettingsRecord
+from app.models import DocumentLearningStateRecord, DocumentPageRecord, DocumentRecord, LearningQuestionRecord, UserSettingsRecord
+from app.question_answer import QuestionAnswer, QuestionCitation, QuestionProviderTimeoutError
+from app.schemas.questions import QuestionSourceContext
+from app.routers.questions import get_question_provider
 from app.schemas.auth import AuthUser
 from app.storage import StorageUnavailableError, get_document_storage
 
@@ -657,6 +661,18 @@ def test_owner_can_delete_document_and_its_rendition_and_page_text(document_api)
                 last_opened_at=datetime.now(UTC),
             )
         )
+        session.add(
+            LearningQuestionRecord(
+                document_id=document_id,
+                owner_id="learner-1",
+                question="What is in this document?",
+                answer="Private answer.",
+                source_context={"mode": "page", "pageIndex": 0, "text": "Private extracted text", "spanIds": []},
+                citations=[],
+                status="complete",
+                created_at=datetime.now(UTC),
+            )
+        )
         session.commit()
 
     response = client.delete(f"/api/documents/{document_id}")
@@ -669,6 +685,9 @@ def test_owner_can_delete_document_and_its_rendition_and_page_text(document_api)
             select(DocumentPageRecord).where(DocumentPageRecord.document_id == document_id)
         ) is None
         assert session.get(DocumentLearningStateRecord, document_id) is None
+        assert session.scalar(
+            select(LearningQuestionRecord).where(LearningQuestionRecord.document_id == document_id)
+        ) is None
 
 
 def test_document_deletion_is_owner_scoped(document_api, monkeypatch) -> None:
@@ -761,7 +780,7 @@ def test_document_learning_state_persists_progress_transcript_and_drawing(docume
         "zoom": 100,
         "workspaceState": {
             "teacherState": "question",
-            "selectionContext": {"text": "A selected passage", "pageIndex": 2},
+            "selectionContext": {"text": "A selected passage", "pageIndex": 2, "spanIds": []},
             "transcript": [
                 {"role": "user", "text": "Explain this passage", "pageIndex": 2},
                 {"role": "assistant", "text": "Here is the explanation.", "pageIndex": 2},
@@ -1011,6 +1030,249 @@ def test_page_text_returns_not_found_for_an_out_of_range_page(document_api) -> N
     response = client.get(f"/api/documents/{document_id}/pages/1/text")
 
     assert response.status_code == 404
+
+
+class FakeQuestionAnswerProvider:
+    def __init__(self, answer: QuestionAnswer | None = None, error: Exception | None = None):
+        self.answer_value = answer or QuestionAnswer(
+            answer="Photosynthesis uses sunlight to make glucose.",
+            citations=[QuestionCitation(quote="uses sunlight", span_ids=["span-1", "span-2"])],
+        )
+        self.error = error
+        self.calls: list[tuple[str, QuestionSourceContext, list[dict[str, str]]]] = []
+
+    def answer(
+        self,
+        question: str,
+        source: QuestionSourceContext,
+        history: list[dict[str, str]],
+    ) -> QuestionAnswer:
+        self.calls.append((question, source, history))
+        if self.error:
+            raise self.error
+        return self.answer_value
+
+
+def create_question_document(sessions, owner_id: str = "learner-1") -> UUID:
+    document_id = uuid4()
+    with sessions() as session:
+        session.add(
+            DocumentRecord(
+                id=document_id,
+                owner_id=owner_id,
+                filename="photosynthesis.pdf",
+                content_type="application/pdf",
+                size_bytes=12,
+                storage_key=f"documents/{document_id}/original",
+                status="ready",
+                page_count=2,
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            DocumentPageRecord(
+                document_id=document_id,
+                page_index=0,
+                page_width=612,
+                page_height=792,
+                text="Photosynthesis uses sunlight to make glucose.",
+                spans=[
+                    {
+                        "id": "span-1",
+                        "text": "uses",
+                        "source": "native",
+                        "bbox": {"x": 0.1, "y": 0.2, "width": 0.1, "height": 0.03},
+                        "confidence": None,
+                    },
+                    {
+                        "id": "span-2",
+                        "text": "sunlight",
+                        "source": "native",
+                        "bbox": {"x": 0.2, "y": 0.2, "width": 0.15, "height": 0.03},
+                        "confidence": None,
+                    },
+                ],
+                used_ocr=False,
+                extractor_version="1",
+            )
+        )
+        session.commit()
+    return document_id
+
+
+def test_learning_question_uses_selected_text_and_persists_followups(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    provider = FakeQuestionAnswerProvider()
+    monkeypatch.setitem(app.dependency_overrides, get_question_provider, lambda: provider)
+
+    first = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={
+            "question": "What does this process use?",
+            "pageIndex": 0,
+            "selectedText": "uses sunlight",
+            "selectedSpanIds": ["span-1", "span-2"],
+        },
+    )
+    second = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "What does it make?", "pageIndex": 0},
+    )
+
+    assert first.status_code == 201
+    assert first.json()["sourceContext"] == {
+        "mode": "selection",
+        "pageIndex": 0,
+        "text": "uses sunlight",
+        "spanIds": ["span-1", "span-2"],
+    }
+    assert first.json()["citations"] == [
+        {"pageIndex": 0, "quote": "uses sunlight", "spanIds": ["span-1", "span-2"]}
+    ]
+    assert second.status_code == 201
+    assert second.json()["sourceContext"]["mode"] == "page"
+    assert provider.calls[0][1].text == "uses sunlight"
+    assert provider.calls[0][1].span_ids == ["span-1", "span-2"]
+    assert provider.calls[1][1].text == "Photosynthesis uses sunlight to make glucose."
+    assert json.loads(provider.calls[1][2][0]["content"]) == {
+        "question": "What does this process use?",
+        "sourceContext": {
+            "mode": "selection",
+            "pageIndex": 0,
+            "text": "uses sunlight",
+        },
+    }
+    assert provider.calls[1][2][1] == {
+        "role": "assistant",
+        "content": "Photosynthesis uses sunlight to make glucose.",
+    }
+
+    history = client.get(f"/api/documents/{document_id}/questions")
+    assert history.status_code == 200
+    assert [item["question"] for item in history.json()["questions"]] == [
+        "What does this process use?",
+        "What does it make?",
+    ]
+    with sessions() as session:
+        records = list(session.scalars(select(LearningQuestionRecord).where(
+            LearningQuestionRecord.document_id == document_id,
+        )))
+    assert len(records) == 2
+    assert all(record.status == "complete" for record in records)
+
+
+def test_learning_question_rejects_unverified_selection_and_invalid_page(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    provider = FakeQuestionAnswerProvider()
+    monkeypatch.setitem(app.dependency_overrides, get_question_provider, lambda: provider)
+
+    unverified = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "Explain this.", "pageIndex": 0, "selectedText": "secret text"},
+    )
+    invalid_span = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={
+            "question": "Explain this.",
+            "pageIndex": 0,
+            "selectedText": "uses sunlight",
+            "selectedSpanIds": ["not-on-this-page"],
+        },
+    )
+    invalid_page = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "Explain this.", "pageIndex": 2},
+    )
+    empty_question = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "   ", "pageIndex": 0},
+    )
+
+    assert unverified.status_code == 422
+    assert invalid_span.status_code == 422
+    assert invalid_page.status_code == 422
+    assert empty_question.status_code == 422
+    assert provider.calls == []
+
+
+def test_learning_questions_enforce_document_ownership(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions, owner_id="learner-2")
+    provider = FakeQuestionAnswerProvider()
+    monkeypatch.setitem(app.dependency_overrides, get_question_provider, lambda: provider)
+
+    response = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "Explain this.", "pageIndex": 0},
+    )
+
+    assert response.status_code == 404
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "expected_status"),
+    [
+        (QuestionProviderTimeoutError(), 504),
+        (None, 503),
+    ],
+)
+def test_learning_question_provider_failures_are_persisted(document_api, monkeypatch, provider_error, expected_status) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    provider = FakeQuestionAnswerProvider(error=provider_error) if provider_error else None
+    monkeypatch.setitem(app.dependency_overrides, get_question_provider, lambda: provider)
+
+    response = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "What does photosynthesis use?", "pageIndex": 0},
+    )
+
+    assert response.status_code == expected_status
+    with sessions() as session:
+        record = session.scalar(select(LearningQuestionRecord).where(
+            LearningQuestionRecord.document_id == document_id,
+        ))
+    assert record is not None
+    assert record.status == "failed"
+    assert record.failure_message
+
+
+def test_learning_question_rejects_provider_citations_outside_context(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    provider = FakeQuestionAnswerProvider(
+        answer=QuestionAnswer(
+            answer="A fabricated answer.",
+            citations=[QuestionCitation(quote="not present in the page", span_ids=[])],
+        )
+    )
+    monkeypatch.setitem(app.dependency_overrides, get_question_provider, lambda: provider)
+
+    response = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "Explain this.", "pageIndex": 0},
+    )
+
+    assert response.status_code == 502
+    with sessions() as session:
+        record = session.scalar(select(LearningQuestionRecord).where(
+            LearningQuestionRecord.document_id == document_id,
+        ))
+    assert record is not None
+    assert record.status == "failed"
+
+
+def test_learning_questions_require_authentication(document_api, monkeypatch) -> None:
+    client, _storage, _sessions = document_api
+    monkeypatch.delitem(app.dependency_overrides, require_authenticated_user)
+
+    response = client.get(f"/api/documents/{uuid4()}/questions")
+
+    assert response.status_code == 401
+    assert response.json()["code"] == "UNAUTHENTICATED"
 
 
 def test_page_text_requires_authentication(document_api, monkeypatch) -> None:

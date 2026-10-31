@@ -108,6 +108,7 @@ class SelectionContext(BaseModel):
 
     text: str = Field(min_length=1, max_length=10_000)
     page_index: int = Field(ge=0)
+    span_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class WorkspaceState(BaseModel):

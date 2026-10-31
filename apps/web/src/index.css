@@ -360,6 +360,16 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .transcript-assistant { border-left: 2px solid var(--green); }
 .transcript-message small { color: var(--muted); font-size: calc(8px * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .08em; }
 .transcript-message p { color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.5; margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.question-exchange { display: grid; gap: 8px; }
+.question-source-context { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 8px 7px; color: var(--muted); font-size: calc(9px * var(--ui-font-scale, 1)); }
+.question-source-context button, .question-citation { border: 0; background: transparent; color: var(--violet); font-size: inherit; text-align: left; cursor: pointer; }
+.question-source-context button { white-space: nowrap; }
+.question-citation { display: block; margin: 8px 0 0; padding: 0; line-height: 1.4; }
+.question-citation:hover, .question-source-context button:hover { text-decoration: underline; }
+.question-error { margin: 0 8px 8px; color: var(--red, #d75d51); font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.4; }
+.question-history-status { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1)); }
+.question-spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: question-spin .7s linear infinite; }
+@keyframes question-spin { to { transform: rotate(360deg); } }
 .back-explanation { border: 0; background: transparent; color: var(--violet); display: flex; align-items: center; gap: 7px; font-size: calc(10px * var(--ui-font-scale, 1)); margin: 18px auto 0; cursor: pointer; }
 .teacher-input-area { position: relative; border-top: 1px solid var(--border-soft); padding: 10px 12px 9px; background: var(--panel); }
 .add-menu { position: absolute; bottom: 69px; left: 12px; width: 190px; padding: 6px; display: grid; gap: 2px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); z-index: 10; }

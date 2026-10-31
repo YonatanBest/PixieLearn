@@ -4,10 +4,17 @@ import DocumentLibrary from "../features/documents/DocumentLibrary";
 import type { LearningDocument } from "../features/documents/service";
 import { getDocumentPageText } from "../features/documents/service";
 import { appConfig } from "../lib/config";
+import {
+  askLearningQuestion,
+  getLearningQuestions,
+  type AskLearningQuestion,
+  type LearningQuestion,
+} from "../features/questions/service";
 import type {
   DocumentLearningState,
   WhiteboardDiagram,
   TranscriptMessage,
+  SelectionContext,
   WhiteboardStroke,
   WorkspaceState,
 } from "../features/documents/learningProgress";
@@ -264,27 +271,47 @@ export function QuizModal({ state, setState, onClose }: { state: TeacherState; s
   </div>;
 }
 
-export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, onTranscriptChange, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate", teachingStyle = "Step-by-step" }: {
+export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, documentId, currentPage, onNavigateToPage, onClearSelection, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate" }: {
   state: TeacherState
   setState: (s: TeacherState) => void
   onResizeStart: () => void
-  selectionContext: { text: string; pageIndex: number } | null
+  selectionContext: SelectionContext | null
   transcript: TranscriptMessage[]
-  onTranscriptChange: (messages: TranscriptMessage[]) => void
+  documentId: string
+  currentPage: number
+  onNavigateToPage: (pageIndex: number) => void
+  onClearSelection: () => void
   autoPlayExplanations?: boolean
   speakingSpeed?: "0.8x" | "1.0x" | "1.2x" | "1.5x"
   voice?: "Pixie · Calm" | "Pixie · Bright"
   learningLevel?: "Beginner" | "Intermediate" | "Advanced"
-  teachingStyle?: "Simple and intuitive" | "Step-by-step" | "Technical and detailed"
 }) {
   const [input, setInput] = useState("");
   const [muted, setMuted] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [questions, setQuestions] = useState<LearningQuestion[]>([]);
+  const [questionHistoryError, setQuestionHistoryError] = useState("");
+  const [questionLoading, setQuestionLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const temporaryId = useRef(0);
+  const questionsUnavailable = appConfig.demoMode;
   useEffect(() => {
-    if (selectionContext) {
-      setInput(`Explain this passage from page ${selectionContext.pageIndex + 1}: "${selectionContext.text}"`);
-    }
-  }, [selectionContext]);
+    let active = true;
+    setHistoryLoading(true);
+    setQuestions([]);
+    setQuestionHistoryError("");
+    getLearningQuestions(documentId)
+      .then(({ questions: savedQuestions }) => {
+        if (active) setQuestions(savedQuestions);
+      })
+      .catch((reason: unknown) => {
+        if (active) setQuestionHistoryError(reason instanceof Error ? reason.message : "Tutor history could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+    return () => { active = false; };
+  }, [documentId]);
   useEffect(() => {
     if (!("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
@@ -301,31 +328,61 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
     window.speechSynthesis.speak(utterance);
     return () => window.speechSynthesis.cancel();
   }, [autoPlayExplanations, learningLevel, speakingSpeed, state, voice]);
+  const sendQuestion = async (
+    question: string,
+    source: AskLearningQuestion,
+    replaceId?: string,
+  ) => {
+    if (!question.trim() || questionLoading) return;
+    const localId = replaceId ?? `pending-${++temporaryId.current}`;
+    const pendingQuestion: LearningQuestion = {
+      id: localId,
+      question,
+      answer: null,
+      sourceContext: {
+        mode: source.selectedText ? "selection" : "page",
+        pageIndex: source.pageIndex,
+        text: source.selectedText ?? "",
+        spanIds: source.selectedSpanIds ?? [],
+      },
+      citations: [],
+      status: "pending",
+      failureMessage: null,
+      createdAt: new Date().toISOString(),
+    };
+    setQuestions((current) => replaceId
+      ? current.map((item) => item.id === replaceId ? pendingQuestion : item)
+      : [...current, pendingQuestion]);
+    setQuestionLoading(true);
+    setState("question");
+    try {
+      const saved = await askLearningQuestion(documentId, source);
+      setQuestions((current) => current.map((item) => item.id === localId ? saved : item));
+      setInput("");
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Pixie could not answer this question. Try again.";
+      setQuestions((current) => current.map((item) => item.id === localId
+        ? { ...item, status: "failed", failureMessage: message }
+        : item));
+    } finally {
+      setQuestionLoading(false);
+    }
+  };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const question = input.trim();
     if (!question) return;
-    const explanation = learningLevel === "Beginner"
-      ? "Think of the query as a question and each key as a label. Scaling keeps the scores balanced so the model can compare them fairly."
-      : learningLevel === "Advanced"
-        ? "Dividing query-key dot products by the square root of the key dimension stabilizes their variance, preventing softmax saturation and preserving useful gradients."
-        : "As the key dimension grows, dot products spread farther apart, pushing softmax toward near-zero or near-one outputs. The scaling term keeps those values in a useful range.";
-    const formattedExplanation = teachingStyle === "Step-by-step"
-      ? `Step 1: Compare the query with each key. Step 2: Scale the scores by the square root of the key dimension. Step 3: Apply softmax to get balanced attention weights. ${explanation}`
-      : teachingStyle === "Simple and intuitive"
-        ? `In simple terms: ${explanation}`
-        : explanation;
-    onTranscriptChange([
-      ...transcript,
-      { role: "user", text: question, pageIndex: selectionContext?.pageIndex ?? null },
-      {
-        role: "assistant",
-        text: formattedExplanation,
-        pageIndex: selectionContext?.pageIndex ?? null,
-      },
-    ]);
-    setState("question");
-    setInput("");
+    const source: AskLearningQuestion = {
+      question,
+      pageIndex: selectionContext?.pageIndex ?? currentPage - 1,
+      ...(selectionContext
+        ? {
+          selectedText: selectionContext.text,
+          selectedSpanIds: selectionContext.spanIds,
+        }
+        : {}),
+    };
+    void sendQuestion(question, source);
   };
   return <aside className="teacher-panel">
     <span className="teacher-resize-handle" role="separator" aria-label="Resize teacher panel" onPointerDown={onResizeStart} />
@@ -339,7 +396,8 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
         <button className="primary-button" onClick={() => setState("teaching")}>Review this section</button><button className="secondary-button">Continue to Multi-Head Attention <Icon name="chevron" /></button>
       </div> :
       <div className="teacher-content">
-        {transcript.length > 0 ? (
+        {questionHistoryError && <p className="question-error" role="alert">{questionHistoryError}</p>}
+        {transcript.length > 0 && (
           <div className="teacher-transcript" role="log" aria-label="Tutor conversation">
             {transcript.map((message, index) => (
               <div className={`transcript-message transcript-${message.role}`} key={`${index}-${message.role}`}>
@@ -348,20 +406,51 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
               </div>
             ))}
           </div>
-        ) : (
+        )}
+        {questions.map((item) => (
+          <div className="question-exchange" key={item.id}>
+            <div className="transcript-message transcript-user">
+              <small>YOU · PAGE {item.sourceContext.pageIndex + 1}</small>
+              <p>{item.question}</p>
+            </div>
+            <div className="transcript-message transcript-assistant">
+              <small>PIXIE · {item.sourceContext.mode === "selection" ? "SELECTED PASSAGE" : "CURRENT PAGE"}</small>
+              {item.status === "pending"
+                ? <p role="status">Thinking about your question…</p>
+                : item.status === "failed"
+                  ? <><p role="alert">{item.failureMessage ?? "Pixie could not answer this question."}</p><button className="text-button" disabled={questionLoading} onClick={() => void sendQuestion(item.question, {
+                    question: item.question,
+                    pageIndex: item.sourceContext.pageIndex,
+                    ...(item.sourceContext.mode === "selection"
+                      ? { selectedText: item.sourceContext.text, selectedSpanIds: item.sourceContext.spanIds }
+                      : {}),
+                  }, item.id)}>Retry</button></>
+                  : <p>{item.answer}</p>}
+              {item.status === "complete" && item.citations.map((citation, index) => (
+                <button className="question-citation" key={`${citation.pageIndex}-${index}`} onClick={() => onNavigateToPage(citation.pageIndex)}>
+                  Page {citation.pageIndex + 1}: “{citation.quote}”
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+        {historyLoading && <p className="question-history-status" role="status">Loading saved questions…</p>}
+        {!historyLoading && questions.length === 0 && !transcript.length && (
           <>
-        <div className="speaking-label"><span className="audio-bars"><i></i><i></i><i></i><i></i></span>{state === "question" ? "ANSWERING YOUR QUESTION" : "EXPLAINING HIGHLIGHTED PASSAGE"}</div>
-        <h2>{state === "question" ? "It’s about keeping the signal balanced." : "Let’s break down this equation."}</h2>
-        <p>{state === "question" ? "As the key dimension grows, the dot product sums more terms. Its values spread farther apart, pushing softmax toward near-zero or near-one outputs." : "The query and key vectors determine how strongly two tokens relate to each other. Think of the query as what we’re looking for, and each key as a label describing what a token contains."}</p>
-        <p>{state === "question" ? "The scaling term brings those values back into a useful range, preserving uncertainty where the model still needs to learn." : <>The scaling term <span className="inline-math">√d<sub>k</sub></span> keeps the dot products in a useful range. Without it, softmax can become overly confident as the vectors get larger.</>}</p>
-        <div className="reference-pill"><span>PAGE {selectionContext ? selectionContext.pageIndex + 1 : 3}</span><b>{selectionContext ? `“${selectionContext.text}”` : <>“divide each by √d<sub>k</sub>...”</>}</b><Icon name="chevron" /></div>
-        {state === "question" && <button className="back-explanation" onClick={() => setState("teaching")}><Icon name="previous" /> Return to explanation</button>}
+            <div className="speaking-label"><span className="audio-bars"><i></i><i></i><i></i><i></i></span>EXPLAINING HIGHLIGHTED PASSAGE</div>
+            <h2>Let’s break down this equation.</h2>
+            <p>The query and key vectors determine how strongly two tokens relate to each other. Think of the query as what we’re looking for, and each key as a label describing what a token contains.</p>
+            <p>The scaling term <span className="inline-math">√d<sub>k</sub></span> keeps the dot products in a useful range. Without it, softmax can become overly confident as the vectors get larger.</p>
           </>
         )}
       </div>}
     <div className="teacher-input-area">
-      {addMenuOpen && <div className="add-menu" role="menu"><button role="menuitem" onClick={() => setAddMenuOpen(false)}><Icon name="upload" />Attach file</button><button role="menuitem" onClick={() => setAddMenuOpen(false)}><Icon name="expand" />Add screenshot</button><button role="menuitem" onClick={() => { setInput("Use the current page as context"); setAddMenuOpen(false); }}><Icon name="file" />Reference current page</button><button role="menuitem" onClick={() => { setInput("Save this as a note: "); setAddMenuOpen(false); }}><Icon name="note" />Add note</button></div>}
-      <form className="ask-form" onSubmit={submit}><button type="button" className={`input-add ${addMenuOpen ? "active" : ""}`} onClick={() => setAddMenuOpen(!addMenuOpen)} aria-label="Add to question" aria-expanded={addMenuOpen}><Icon name="plus" /></button><input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Ask anything about this lesson..." aria-label="Ask your teacher" /><MuteButton muted={muted} onToggle={() => setMuted(!muted)} /><button className="send-button" type="submit" aria-label="Send question"><Icon name="send" /></button></form>
+      {addMenuOpen && <div className="add-menu" role="menu"><button role="menuitem" onClick={() => setAddMenuOpen(false)}><Icon name="upload" />Attach file</button><button role="menuitem" onClick={() => setAddMenuOpen(false)}><Icon name="expand" />Add screenshot</button><button role="menuitem" onClick={() => { onClearSelection(); setAddMenuOpen(false); }}><Icon name="file" />Use current page</button><button role="menuitem" onClick={() => { setInput("Save this as a note: "); setAddMenuOpen(false); }}><Icon name="note" />Add note</button></div>}
+      <div className="question-source-context" role="status">
+        Using {selectionContext ? `selected passage · page ${selectionContext.pageIndex + 1}` : `current page · page ${currentPage}`}
+        {selectionContext && <button type="button" onClick={onClearSelection}>Clear selection</button>}
+      </div>
+      <form className="ask-form" onSubmit={submit}><button type="button" className={`input-add ${addMenuOpen ? "active" : ""}`} onClick={() => setAddMenuOpen(!addMenuOpen)} aria-label="Add to question" aria-expanded={addMenuOpen}><Icon name="plus" /></button><input value={input} onChange={(e) => setInput(e.target.value)} placeholder={questionsUnavailable ? "Sign in to ask questions" : "Ask about this page..."} aria-label="Ask your teacher" disabled={questionsUnavailable} /><MuteButton muted={muted} onToggle={() => setMuted(!muted)} /><button className="send-button" type="submit" aria-label="Send question" disabled={questionsUnavailable || questionLoading || !input.trim()}>{questionLoading ? <span className="question-spinner" aria-hidden="true" /> : <Icon name="send" />}</button></form>
     </div>
   </aside>;
 }
@@ -383,7 +472,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   const [searchResultIndex, setSearchResultIndex] = useState(0);
   const [searchStatus, setSearchStatus] = useState("");
   const pageCount = learningDocument?.pageCount ?? 0;
-  const [selectionContext, setSelectionContext] = useState<{ text: string; pageIndex: number } | null>(null);
+  const [selectionContext, setSelectionContext] = useState<SelectionContext | null>(null);
   const resizing = useRef(false);
   const restoringState = useRef(false);
   const persistedSnapshot = useRef("");
@@ -594,11 +683,11 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
         <Suspense fallback={<p className="document-library-message" role="status">Opening your document…</p>}>
           {appConfig.demoMode
             ? <DocumentPage page={currentPage} searchQuery={searchQuery} />
-            : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} searchQuery={searchQuery} onAskSelection={(text, pageIndex) => setSelectionContext({ text, pageIndex })} />}
+            : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} searchQuery={searchQuery} onAskSelection={(text, pageIndex, spanIds) => setSelectionContext({ text, pageIndex, spanIds })} />}
         </Suspense>
         {captionsEnabled && <LiveCaptions transparency={captionTransparency} contrast={captionContrast} textSize={captionTextSize} position={captionPosition} />}
       </section>
-      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} onTranscriptChange={setTranscript} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} teachingStyle={teachingStyle} onResizeStart={() => {
+      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} documentId={learningDocument.id} currentPage={currentPage} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} onClearSelection={() => setSelectionContext(null)} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} onResizeStart={() => {
         resizing.current = true;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";

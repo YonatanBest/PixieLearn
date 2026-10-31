@@ -17,7 +17,7 @@ type Props = {
   pageCount: number
   pageIndex: number
   zoom: number
-  onAskSelection: (text: string, pageIndex: number) => void
+  onAskSelection: (text: string, pageIndex: number, spanIds: string[]) => void
   searchQuery?: string
 }
 
@@ -29,6 +29,7 @@ export default function DocumentTextPreview({ documentId, pageCount, pageIndex, 
   const renderRef = useRef<RenderTask | null>(null)
   const [pageText, setPageText] = useState<PageText | null>(null)
   const [selectedText, setSelectedText] = useState("")
+  const [selectedSpanIds, setSelectedSpanIds] = useState<string[]>([])
   const [pagePixelHeight, setPagePixelHeight] = useState(0)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
@@ -134,10 +135,13 @@ export default function DocumentTextPreview({ documentId, pageCount, pageIndex, 
     }
   }, [documentId, pageIndex, reload, zoom])
 
-  const handleSelectionChange = useCallback((text: string) => setSelectedText(text), [])
+  const handleSelectionChange = useCallback((text: string, spanIds: string[]) => {
+    setSelectedText(text)
+    setSelectedSpanIds(spanIds)
+  }, [])
   const askAboutSelection = () => {
     if (!selectedText) return
-    onAskSelection(selectedText, pageIndex)
+    onAskSelection(selectedText, pageIndex, selectedSpanIds)
   }
 
   return (

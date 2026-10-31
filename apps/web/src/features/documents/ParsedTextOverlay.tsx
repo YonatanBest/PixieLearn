@@ -9,7 +9,7 @@ export default function ParsedTextOverlay({
 }: {
   spans: PageText["spans"]
   pagePixelHeight: number
-  onSelectionChange: (text: string) => void
+  onSelectionChange: (text: string, spanIds: string[]) => void
   searchQuery?: string
 }) {
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase()
@@ -17,15 +17,20 @@ export default function ParsedTextOverlay({
   function readSelection(event: SyntheticEvent<HTMLDivElement>) {
     const selection = window.getSelection()
     if (!selection?.rangeCount) {
-      onSelectionChange("")
+      onSelectionChange("", [])
       return
     }
     const range = selection.getRangeAt(0)
     if (!event.currentTarget.contains(range.commonAncestorContainer)) {
-      onSelectionChange("")
+      onSelectionChange("", [])
       return
     }
-    onSelectionChange(selection.toString().trim())
+    const text = selection.toString().trim()
+    const spanIds = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-span-id]"))
+      .filter((span) => range.intersectsNode(span))
+      .map((span) => span.dataset.spanId)
+      .filter((spanId): spanId is string => Boolean(spanId))
+    onSelectionChange(text, spanIds)
   }
 
   return (
