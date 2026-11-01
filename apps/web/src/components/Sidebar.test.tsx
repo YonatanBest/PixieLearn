@@ -35,6 +35,8 @@ describe("sidebar account profile", () => {
           onAvatarChange={async () => undefined}
           view="home"
           setView={() => undefined}
+          mode="learning"
+          onModeChange={() => undefined}
           collapsed={false}
           setCollapsed={() => undefined}
           theme="dark"
@@ -61,6 +63,8 @@ describe("sidebar account profile", () => {
           onAvatarChange={async () => undefined}
           view="home"
           setView={() => undefined}
+          mode="learning"
+          onModeChange={() => undefined}
           collapsed={false}
           setCollapsed={() => undefined}
           theme="dark"
@@ -84,6 +88,8 @@ describe("sidebar account profile", () => {
           onAvatarChange={async () => undefined}
           view="home"
           setView={() => undefined}
+          mode="learning"
+          onModeChange={() => undefined}
           collapsed={false}
           setCollapsed={() => undefined}
           theme="dark"
@@ -113,6 +119,8 @@ describe("sidebar account profile", () => {
           onAvatarChange={async () => undefined}
           view="home"
           setView={() => undefined}
+          mode="learning"
+          onModeChange={() => undefined}
           collapsed
           setCollapsed={() => undefined}
           theme="dark"
@@ -149,6 +157,8 @@ describe("sidebar account profile", () => {
           onAvatarChange={onAvatarChange}
           view="home"
           setView={() => undefined}
+          mode="learning"
+          onModeChange={() => undefined}
           collapsed={false}
           setCollapsed={() => undefined}
           theme="dark"
@@ -173,5 +183,36 @@ describe("sidebar account profile", () => {
 
     expect(container.textContent).toContain("Profile pictures must be 100 KB or smaller.");
     expect(onAvatarChange).not.toHaveBeenCalled();
+  });
+
+  it("switches between Learning and Workspace modes", async () => {
+    const onModeChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <Sidebar
+          user={{ id: "user-99", name: "Riley", email: "riley@example.com" }}
+          onAvatarChange={async () => undefined}
+          view="home"
+          setView={() => undefined}
+          mode="learning"
+          onModeChange={onModeChange}
+          collapsed={false}
+          setCollapsed={() => undefined}
+          theme="dark"
+          toggleTheme={() => undefined}
+          onLogout={() => undefined}
+          recentDocuments={[]}
+          activeDocumentId={null}
+          onOpenRecentDocument={() => undefined}
+        />,
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[title="Workspace mode"]')?.click();
+    });
+
+    expect(onModeChange).toHaveBeenCalledWith("workspace");
+    expect(container.querySelector('[title="Learning mode"]')?.getAttribute("aria-pressed")).toBe("true");
   });
 });
