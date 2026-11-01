@@ -7,6 +7,7 @@ import WorkspaceCanvas from "../components/WorkspaceCanvas";
 import { SettingsView } from "../components/Settings";
 import { authService } from "../features/auth/service";
 import type { AuthUser } from "../features/auth/types";
+import { defaultUserSettings, getUserSettings, saveUserSettings, type UserSettings } from "../features/settings/service";
 import { listDocuments, type LearningDocument } from "../features/documents/service";
 import MyLearning from "../features/documents/MyLearning";
 import { appConfig } from "../lib/config";
@@ -34,16 +35,23 @@ export default function App() {
   const [mode, setMode] = useState<AppMode>("learning");
   const [collapsed, setCollapsed] = useState(false);
   const [floating, setFloating] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [settings, setSettings] = useState<UserSettings>(defaultUserSettings);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsError, setSettingsError] = useState("");
+  const [systemTheme, setSystemTheme] = useState<"dark" | "light">(() =>
+    window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark",
+  );
+  const theme = settings.theme === "system" ? systemTheme : settings.theme;
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
-  const [captionTransparency, setCaptionTransparency] = useState(18);
-  const [captionContrast, setCaptionContrast] = useState(100);
+  const [captionTransparency, setCaptionTransparencyState] = useState(defaultUserSettings.captionTransparency);
+  const [captionContrast, setCaptionContrastState] = useState(defaultUserSettings.captionContrast);
   const [learningDocument, setLearningDocument] = useState<LearningDocument | null>(null);
   const [recentDocuments, setRecentDocuments] = useState<RecentLearningDocument[]>([]);
   const [availableDocuments, setAvailableDocuments] = useState<LearningDocument[]>([]);
   const [learningState, setLearningState] = useState<DocumentLearningState | null>(null);
   const [progressError, setProgressError] = useState("");
   const latestLearningState = useRef<DocumentLearningState | null>(null);
+  const settingsSaveTimer = useRef<number | undefined>(undefined);
   useEffect(() => {
     let active = true;
     authService.getSession()
@@ -75,6 +83,63 @@ export default function App() {
       });
     return () => { active = false; };
   }, [authUser]);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const updateSystemTheme = () => setSystemTheme(media.matches ? "light" : "dark");
+    updateSystemTheme();
+    media.addEventListener("change", updateSystemTheme);
+    return () => media.removeEventListener("change", updateSystemTheme);
+  }, []);
+  useEffect(() => {
+    if (!authUser) {
+      setSettingsLoading(false);
+      return;
+    }
+    let active = true;
+    setSettingsLoading(true);
+    getUserSettings()
+      .then((saved) => {
+        if (active) {
+          setSettings(saved);
+          setCaptionTransparencyState(saved.captionTransparency);
+          setCaptionContrastState(saved.captionContrast);
+          setSettingsError("");
+        }
+      })
+      .catch((reason: unknown) => {
+        if (active) setSettingsError(reason instanceof Error ? reason.message : "Settings could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setSettingsLoading(false);
+      });
+    return () => {
+      active = false;
+      window.clearTimeout(settingsSaveTimer.current);
+    };
+  }, [authUser?.id]);
+
+  const updateSettings = (changes: Partial<UserSettings>) => {
+    const updated = { ...settings, ...changes };
+    setSettings(updated);
+    setSettingsError("");
+    if (changes.captionTransparency !== undefined) setCaptionTransparencyState(changes.captionTransparency);
+    if (changes.captionContrast !== undefined) setCaptionContrastState(changes.captionContrast);
+    window.clearTimeout(settingsSaveTimer.current);
+    settingsSaveTimer.current = window.setTimeout(() => {
+      void saveUserSettings(updated).catch((reason: unknown) => {
+        setSettingsError(reason instanceof Error ? reason.message : "Settings could not be saved.");
+      });
+    }, changes.captionTransparency !== undefined || changes.captionContrast !== undefined ? 350 : 0);
+  };
+
+  const setCaptionTransparency = (value: number) => {
+    setCaptionTransparencyState(value);
+    updateSettings({ captionTransparency: value });
+  };
+  const setCaptionContrast = (value: number) => {
+    setCaptionContrastState(value);
+    updateSettings({ captionContrast: value });
+  };
 
   if (authLoading) return <div className="public-shell" data-theme={theme}><main className="auth-page" aria-busy="true"><div className="auth-brand">PixieLearn</div><p>Restoring your session…</p></main></div>;
   if (!authUser) {
@@ -239,11 +304,50 @@ export default function App() {
     setMode(nextMode);
     setView(nextMode === "workspace" ? "canvas" : learningDocument ? "workspace" : "home");
   };
-  return <div className="app-shell" data-theme={theme}>
-    <Sidebar user={authUser} onAvatarChange={async (image) => { setAuthUser(await authService.updateAvatar(image)); }} view={view} setView={changeView} mode={mode} onModeChange={changeMode} collapsed={collapsed} setCollapsed={setCollapsed} theme={theme} toggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} onLogout={async () => { if (learningDocument && latestLearningState.current) checkpointWorkspace(learningDocument, { pageIndex: latestLearningState.current.pageIndex, zoom: latestLearningState.current.zoom, workspaceState: latestLearningState.current.workspaceState }); await authService.logout(); setAuthUser(null); setPublicView("landing"); setFloating(false); setLearningDocument(null); latestLearningState.current = null; setLearningState(null); setRecentDocuments([]); setAvailableDocuments([]); setMode("learning"); }} recentDocuments={recentDocuments} activeDocumentId={learningDocument?.id ?? null} onOpenRecentDocument={(document) => void openDocument(document)} />
-    {progressError && <div className="app-error-banner" role="alert">{progressError}</div>}
-    {view === "workspace" ? <Workspace openFloating={() => setFloating(true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} learningDocument={learningDocument} learningState={learningState} onWorkspaceChange={saveWorkspace} onWorkspaceCheckpoint={checkpointWorkspace} onOpenDocument={openDocument} /> : view === "home" ? <Home onOpenDocument={openDocument} /> : view === "learning" ? <MyLearning onOpenDocument={openDocument} onBrowseLibrary={() => changeView("home")} /> : view === "settings" ? <SettingsView /> : null}
+  const logout = async () => {
+    if (learningDocument && latestLearningState.current) checkpointWorkspace(learningDocument, {
+      pageIndex: latestLearningState.current.pageIndex,
+      zoom: latestLearningState.current.zoom,
+      workspaceState: latestLearningState.current.workspaceState,
+    });
+    await authService.logout();
+    setAuthUser(null);
+    setPublicView("landing");
+    setFloating(false);
+    setLearningDocument(null);
+    latestLearningState.current = null;
+    setLearningState(null);
+    setRecentDocuments([]);
+    setAvailableDocuments([]);
+    setMode("learning");
+  };
+  const exportLearningData = async (notesOnly: boolean) => {
+    const documents = await listDocuments();
+    const readyDocuments = documents.filter((document) => document.status === "ready" && document.pageCount);
+    const states = await Promise.all(readyDocuments.map((document) => getDocumentLearningState(document.id)));
+    const exported = states.map((state) => ({
+      documentId: state.documentId,
+      filename: readyDocuments.find((document) => document.id === state.documentId)?.filename ?? state.documentId,
+      pageIndex: state.pageIndex,
+      pageCount: state.pageCount,
+      lastOpenedAt: state.lastOpenedAt,
+      ...(notesOnly
+        ? { notes: state.workspaceState.transcript.filter((message) => message.role === "assistant") }
+        : { transcript: state.workspaceState.transcript }),
+    }));
+    const file = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = notesOnly ? "pixielearn-notes.json" : "pixielearn-learning-history.json";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return <div className="app-shell" data-theme={theme} data-font-size={settings.fontSize} data-reduce-motion={settings.reduceMotion}>
+    <Sidebar user={authUser} onAvatarChange={async (image) => { setAuthUser(await authService.updateAvatar(image)); }} view={view} setView={changeView} mode={mode} onModeChange={changeMode} collapsed={collapsed} setCollapsed={setCollapsed} theme={theme} toggleTheme={() => updateSettings({ theme: theme === "dark" ? "light" : "dark" })} onLogout={logout} recentDocuments={recentDocuments} activeDocumentId={learningDocument?.id ?? null} onOpenRecentDocument={(document) => void openDocument(document)} />
+    {(progressError || settingsError) && <div className="app-error-banner" role="alert">{progressError || settingsError}</div>}
+    {view === "workspace" ? <Workspace openFloating={() => setFloating(true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} captionTextSize={settings.captionTextSize} captionPosition={settings.captionPosition} defaultDocumentZoom={settings.defaultDocumentZoom} searchScope={settings.searchScope} rememberLastPage={settings.rememberLastPage} autoPlayExplanations={settings.autoPlayExplanations} continueAutomatically={settings.continueAutomatically} learningLevel={settings.learningLevel} teachingStyle={settings.teachingStyle} speakingSpeed={settings.speakingSpeed} voice={settings.voice} learningDocument={learningDocument} learningState={learningState} onWorkspaceChange={saveWorkspace} onWorkspaceCheckpoint={checkpointWorkspace} onOpenDocument={openDocument} /> : view === "home" ? <Home onOpenDocument={openDocument} /> : view === "learning" ? <MyLearning onOpenDocument={openDocument} onBrowseLibrary={() => changeView("home")} /> : view === "settings" ? settingsLoading ? <main className="settings-view" aria-busy="true"><p role="status">Loading your settings…</p></main> : <SettingsView settings={settings} userEmail={authUser.email} onSettingsChange={updateSettings} onLogout={() => void logout()} onExportNotes={() => void exportLearningData(true).catch((reason: unknown) => setSettingsError(reason instanceof Error ? reason.message : "Notes could not be exported."))} onExportLearningHistory={() => void exportLearningData(false).catch((reason: unknown) => setSettingsError(reason instanceof Error ? reason.message : "Learning history could not be exported."))} /> : null}
     <WorkspaceCanvas hidden={view !== "canvas"} ownerId={authUser.id} documents={availableDocuments} onOpenDocument={(document) => void openDocument(document)} />
-    {floating && <FloatingTutor onOpen={() => { setFloating(false); setView("workspace"); }} onLessonPaused={() => saveFloatingWorkspace({ teacherState: "paused" }, true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} whiteboardOpen={learningState?.workspaceState.whiteboardOpen ?? false} onWhiteboardOpenChange={(open) => saveFloatingWorkspace({ whiteboardOpen: open }, !open)} whiteboardDrawing={learningState?.workspaceState.whiteboardDrawing ?? []} onWhiteboardDrawingChange={(whiteboardDrawing) => saveFloatingWorkspace({ whiteboardDrawing })} whiteboardDiagrams={learningState?.workspaceState.whiteboardDiagrams ?? []} onWhiteboardDiagramsChange={(whiteboardDiagrams) => saveFloatingWorkspace({ whiteboardDiagrams })} />}
+    {floating && <FloatingTutor onOpen={() => { setFloating(false); setView("workspace"); }} onLessonPaused={() => saveFloatingWorkspace({ teacherState: "paused" }, true)} captionsEnabled={captionsEnabled} setCaptionsEnabled={setCaptionsEnabled} captionTransparency={captionTransparency} setCaptionTransparency={setCaptionTransparency} captionContrast={captionContrast} setCaptionContrast={setCaptionContrast} captionTextSize={settings.captionTextSize} captionPosition={settings.captionPosition} whiteboardOpen={learningState?.workspaceState.whiteboardOpen ?? false} onWhiteboardOpenChange={(open) => saveFloatingWorkspace({ whiteboardOpen: open }, !open)} whiteboardDrawing={learningState?.workspaceState.whiteboardDrawing ?? []} onWhiteboardDrawingChange={(whiteboardDrawing) => saveFloatingWorkspace({ whiteboardDrawing })} whiteboardDiagrams={learningState?.workspaceState.whiteboardDiagrams ?? []} onWhiteboardDiagramsChange={(whiteboardDiagrams) => saveFloatingWorkspace({ whiteboardDiagrams })} />}
   </div>;
 }

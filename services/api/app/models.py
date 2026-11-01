@@ -67,3 +67,12 @@ class DocumentLearningStateRecord(Base):
     last_opened_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
+
+
+class UserSettingsRecord(Base):
+    __tablename__ = "user_settings"
+
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    settings: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )

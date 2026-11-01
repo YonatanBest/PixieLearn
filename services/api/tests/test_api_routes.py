@@ -18,7 +18,7 @@ from app.dependencies.ownership import assert_resource_owner
 from app.document_queue import QueueUnavailableError, get_document_queue
 from app.database import Base, get_db
 from app.main import app
-from app.models import DocumentLearningStateRecord, DocumentPageRecord, DocumentRecord
+from app.models import DocumentLearningStateRecord, DocumentPageRecord, DocumentRecord, UserSettingsRecord
 from app.schemas.auth import AuthUser
 from app.storage import StorageUnavailableError, get_document_storage
 
@@ -140,6 +140,42 @@ def test_authenticated_learner_uploads_a_private_pdf(document_api) -> None:
     queue = app.dependency_overrides[get_document_queue]()
     assert queue.document_ids == [response.json()["id"]]
     assert list(storage.objects.values()) == [private_notes]
+
+
+def test_user_settings_are_persisted_for_the_authenticated_user(document_api) -> None:
+    client, _storage, sessions = document_api
+
+    default_response = client.get("/api/settings")
+
+    assert default_response.status_code == 200
+    assert default_response.json()["theme"] == "dark"
+    assert default_response.json()["fontSize"] == "medium"
+
+    preferences = default_response.json() | {
+        "theme": "light",
+        "fontSize": "large",
+        "speakingSpeed": "1.5x",
+        "captionContrast": 125,
+    }
+    save_response = client.put("/api/settings", json=preferences)
+
+    assert save_response.status_code == 200
+    assert save_response.json() == preferences
+
+    with sessions() as session:
+        saved = session.get(UserSettingsRecord, "learner-1")
+        assert saved is not None
+        assert saved.settings["theme"] == "light"
+        assert saved.settings["fontSize"] == "large"
+
+    assert client.get("/api/settings").json() == preferences
+
+
+def test_user_settings_reject_invalid_preference_values(document_api) -> None:
+    client, _storage, _sessions = document_api
+    response = client.put("/api/settings", json={"theme": "neon"})
+
+    assert response.status_code == 422
 
 
 def test_authenticated_learner_uploads_a_structurally_valid_pptx(document_api) -> None:
