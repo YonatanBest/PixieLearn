@@ -7,7 +7,11 @@ const envModule = new URL("../dist/env.js", import.meta.url).href;
 function importEnvironment(overrides = {}) {
   return spawnSync(
     process.execPath,
-    ["--input-type=module", "-e", `await import(${JSON.stringify(envModule)})`],
+    [
+      "--input-type=module",
+      "-e",
+      `const { env } = await import(${JSON.stringify(envModule)}); console.log(JSON.stringify(env.frontendOrigins));`,
+    ],
     {
       encoding: "utf8",
       env: {
@@ -21,9 +25,33 @@ function importEnvironment(overrides = {}) {
 }
 
 test("loads valid auth configuration", () => {
-  const result = importEnvironment({ PORT: "3001" });
+  const result = importEnvironment({
+    PORT: "3001",
+    FRONTEND_URLS:
+      "http://localhost:8443, http://192.168.1.100:8443, http://localhost:8443",
+  });
 
   assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [
+    "http://localhost:8443",
+    "http://192.168.1.100:8443",
+  ]);
+});
+
+test("supports the legacy single frontend origin setting", () => {
+  const result = importEnvironment({ FRONTEND_URL: "http://localhost:8443" });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), ["http://localhost:8443"]);
+});
+
+test("rejects frontend URLs that are not origins", () => {
+  const result = importEnvironment({
+    FRONTEND_URLS: "http://localhost:8443/app",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /must contain only http\(s\) origins/);
 });
 
 test("requires a Better Auth secret", () => {
