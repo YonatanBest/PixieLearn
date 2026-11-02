@@ -22,6 +22,12 @@ export type TranscriptMessage = {
   pageIndex: number | null
 }
 
+export type SelectionContext = {
+  text: string;
+  pageIndex: number;
+  spanIds?: string[];
+};
+
 export type WhiteboardPoint = { x: number; y: number }
 export type WhiteboardStroke = {
   points: WhiteboardPoint[]
@@ -38,7 +44,7 @@ export type WhiteboardDiagram = {
 
 export type WorkspaceState = {
   teacherState: "teaching" | "quiz" | "feedback" | "question" | "paused" | "complete"
-  selectionContext: { text: string; pageIndex: number } | null
+  selectionContext: SelectionContext | null
   transcript: TranscriptMessage[]
   whiteboardOpen: boolean
   whiteboardDrawing: WhiteboardStroke[]

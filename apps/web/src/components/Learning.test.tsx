@@ -2,10 +2,16 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningDocument } from "../features/documents/service";
+import { askLearningQuestion, getLearningQuestions } from "../features/questions/service";
 import { Workspace } from "./Learning";
 
 vi.mock("../lib/config", () => ({
   appConfig: { demoMode: false, showMockExamples: false },
+}));
+
+vi.mock("../features/questions/service", () => ({
+  getLearningQuestions: vi.fn(() => Promise.resolve({ questions: [] })),
+  askLearningQuestion: vi.fn(),
 }));
 
 vi.mock("../features/documents/DocumentTextPreview", () => ({
@@ -13,11 +19,11 @@ vi.mock("../features/documents/DocumentTextPreview", () => ({
     documentId: string
     pageIndex: number
     zoom: number
-    onAskSelection: (text: string, pageIndex: number) => void
+    onAskSelection: (text: string, pageIndex: number, spanIds: string[]) => void
   }) => (
     <div data-testid="pdf-session-viewer" data-document-id={documentId} data-page-index={pageIndex} data-zoom={zoom}>
       Rendered PDF page
-      <button type="button" onClick={() => onAskSelection("Plants need sunlight", pageIndex)}>Select passage</button>
+      <button type="button" onClick={() => onAskSelection("Plants need sunlight", pageIndex, ["span-1", "span-2"])}>Select passage</button>
     </div>
   ),
 }));
@@ -37,6 +43,22 @@ afterEach(() => {
 describe("learning workspace document session", () => {
   beforeEach(() => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.mocked(getLearningQuestions).mockReset().mockResolvedValue({ questions: [] });
+    vi.mocked(askLearningQuestion).mockReset().mockImplementation(async (_documentId, request) => ({
+      id: "question-1",
+      question: request.question,
+      answer: "Plants use light to make stored chemical energy.",
+      sourceContext: {
+        mode: request.selectedText ? "selection" : "page",
+        pageIndex: request.pageIndex,
+        text: request.selectedText ?? "Current page text.",
+        spanIds: request.selectedSpanIds ?? [],
+      },
+      citations: [{ pageIndex: request.pageIndex, quote: request.selectedText ?? "Plants need sunlight", spanIds: request.selectedSpanIds ?? [] }],
+      status: "complete",
+      failureMessage: null,
+      createdAt: "2026-10-31T08:00:00Z",
+    }));
   });
 
   it("renders the selected library PDF as the real session document", async () => {
@@ -122,7 +144,7 @@ describe("learning workspace document session", () => {
     expect(viewer?.getAttribute("data-zoom")).toBe("92");
   });
 
-  it("passes selected page text into the Pixie tutor prompt", async () => {
+  it("sends a typed question with the selected passage and its source span IDs", async () => {
     const onWorkspaceChange = vi.fn();
     container = document.createElement("div");
     document.body.append(container);
@@ -149,16 +171,114 @@ describe("learning workspace document session", () => {
       await Promise.resolve();
     });
 
-    expect(container.querySelector<HTMLInputElement>("[aria-label='Ask your teacher']")?.value).toBe(
-      'Explain this passage from page 1: "Plants need sunlight"',
-    );
+    const input = container.querySelector<HTMLInputElement>("[aria-label='Ask your teacher']")!;
+    expect(input.value).toBe("");
+    expect(container.textContent).toContain("Using selected passage · page 1");
     await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "Why do plants need sunlight?");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
       container.querySelector<HTMLButtonElement>("[aria-label='Send question']")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
     });
     expect(container.textContent).toContain("YOU · PAGE 1");
-    expect(container.textContent).toContain("Plants need sunlight");
-    expect(container.textContent).toContain("PIXIE · PAGE 1");
-    expect(onWorkspaceChange.mock.calls.at(-1)?.[1].workspaceState.transcript).toHaveLength(2);
+    expect(container.textContent).toContain("Why do plants need sunlight?");
+    expect(container.textContent).toContain("Plants use light to make stored chemical energy.");
+    expect(container.textContent).toContain("Page 1: “Plants need sunlight”");
+    expect(askLearningQuestion).toHaveBeenCalledWith("document-42", {
+      question: "Why do plants need sunlight?",
+      pageIndex: 0,
+      selectedText: "Plants need sunlight",
+      selectedSpanIds: ["span-1", "span-2"],
+    });
+    expect(onWorkspaceChange).toHaveBeenCalled();
+    expect(onWorkspaceChange.mock.calls.at(-1)?.[1].workspaceState.selectionContext).toEqual({
+      text: "Plants need sunlight",
+      pageIndex: 0,
+      spanIds: ["span-1", "span-2"],
+    });
+  });
+
+  it("uses the current page when no passage is selected", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<Workspace
+        openFloating={() => undefined}
+        captionsEnabled={false}
+        setCaptionsEnabled={() => undefined}
+        captionTransparency={18}
+        setCaptionTransparency={() => undefined}
+        captionContrast={100}
+        setCaptionContrast={() => undefined}
+        learningDocument={{ id: "document-42", filename: "photosynthesis.pdf", pageCount: 8 }}
+        onWorkspaceChange={() => undefined}
+        onWorkspaceCheckpoint={() => undefined}
+        onOpenDocument={() => undefined}
+      />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "Next page")?.click();
+      await Promise.resolve();
+    });
+    const input = container.querySelector<HTMLInputElement>("[aria-label='Ask your teacher']")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "What is photosynthesis?");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      container.querySelector<HTMLButtonElement>("[aria-label='Send question']")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(askLearningQuestion).toHaveBeenCalledWith("document-42", {
+      question: "What is photosynthesis?",
+      pageIndex: 1,
+    });
+    expect(container.textContent).toContain("CURRENT PAGE");
+    expect(container.textContent).toContain("Using current page · page 2");
+  });
+
+  it("shows provider errors and lets the learner retry without losing the question", async () => {
+    vi.mocked(askLearningQuestion).mockRejectedValueOnce(new Error("Tutor provider timed out."));
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<Workspace
+        openFloating={() => undefined}
+        captionsEnabled={false}
+        setCaptionsEnabled={() => undefined}
+        captionTransparency={18}
+        setCaptionTransparency={() => undefined}
+        captionContrast={100}
+        setCaptionContrast={() => undefined}
+        learningDocument={{ id: "document-42", filename: "photosynthesis.pdf", pageCount: 8 }}
+        onWorkspaceChange={() => undefined}
+        onWorkspaceCheckpoint={() => undefined}
+        onOpenDocument={() => undefined}
+      />);
+      await Promise.resolve();
+    });
+    const input = container.querySelector<HTMLInputElement>("[aria-label='Ask your teacher']")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "Why does it need light?");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      container.querySelector<HTMLButtonElement>("[aria-label='Send question']")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Tutor provider timed out.");
+    expect(input.value).toBe("Why does it need light?");
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Plants use light to make stored chemical energy.");
+    expect(askLearningQuestion).toHaveBeenCalledTimes(2);
   });
 
   it("restores the last page, tutor transcript, and whiteboard drawing", async () => {

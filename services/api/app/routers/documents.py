@@ -18,7 +18,7 @@ from app.config import Settings, get_settings
 from app.database import get_db
 from app.dependencies.auth import require_authenticated_user
 from app.document_queue import DocumentQueue, QueueUnavailableError, get_document_queue
-from app.models import DocumentLearningStateRecord, DocumentPageRecord, DocumentRecord
+from app.models import DocumentLearningStateRecord, DocumentPageRecord, DocumentRecord, LearningQuestionRecord
 from app.schemas.auth import AuthUser
 from app.schemas.documents import (
     DocumentLearningStateRead,
@@ -423,6 +423,7 @@ def delete_document(
             DocumentLearningStateRecord.document_id == document.id,
         )
     )
+    session.execute(delete(LearningQuestionRecord).where(LearningQuestionRecord.document_id == document.id))
     session.execute(delete(DocumentPageRecord).where(DocumentPageRecord.document_id == document.id))
     session.execute(
         delete(DocumentRecord).where(

@@ -81,6 +81,6 @@ describe("parsed text overlay", () => {
       word?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }))
     })
 
-    expect(onSelectionChange).toHaveBeenLastCalledWith("Plants")
+    expect(onSelectionChange).toHaveBeenLastCalledWith("Plants", ["p00000-w00000"])
   })
 })
