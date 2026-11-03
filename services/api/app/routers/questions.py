@@ -31,6 +31,7 @@ from app.schemas.questions import (
     LearningQuestionCreate,
     LearningQuestionList,
     LearningQuestionRead,
+    PdfHighlightAction,
     QuestionSourceContext,
 )
 
@@ -115,6 +116,28 @@ def _validate_answer(answer: QuestionAnswer, source: QuestionSourceContext) -> l
     return validated
 
 
+def _validate_actions(answer: QuestionAnswer, source: QuestionSourceContext) -> list[dict]:
+    normalized_source = normalize_source_text(source.text)
+    validated: list[dict] = []
+    for action in answer.actions:
+        if action.type == "pdf_highlight":
+            normalized_quote = normalize_source_text(action.quote)
+            if not normalized_quote or normalized_quote not in normalized_source:
+                raise QuestionProviderRequestError("The provider returned an unsupported PDF highlight.")
+            validated.append(
+                PdfHighlightAction(
+                    page_index=source.page_index,
+                    quote=action.quote,
+                ).model_dump(mode="json", by_alias=True)
+            )
+        elif action.type == "whiteboard_label":
+            normalized_label = normalize_source_text(action.text)
+            if not normalized_label or normalized_label not in normalized_source:
+                raise QuestionProviderRequestError("The provider returned an unsupported whiteboard label.")
+            validated.append(action.model_dump(mode="json", by_alias=True))
+    return validated
+
+
 @router.get("/{document_id}/questions", response_model=LearningQuestionList)
 def list_learning_questions(
     document_id: str,
@@ -171,6 +194,7 @@ def ask_learning_question(
         answer=None,
         source_context=source.model_dump(mode="json", by_alias=True),
         citations=[],
+        actions=[],
         status="pending",
         created_at=datetime.now(UTC),
     )
@@ -188,8 +212,10 @@ def ask_learning_question(
         session.commit()
         answer = provider.answer(question, source, history)
         citations = _validate_answer(answer, source)
+        actions = _validate_actions(answer, source)
         record.answer = answer.answer
         record.citations = citations
+        record.actions = actions
         record.status = "complete"
         record.failure_message = None
         session.commit()

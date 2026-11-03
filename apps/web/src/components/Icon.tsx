@@ -59,6 +59,6 @@ export function IconButton({ icon, label, onClick, active = false, className = "
   return <button type="button" className={`icon-button ${active ? "active" : ""} ${className}`} onClick={onClick} aria-label={label} title={label}><Icon name={icon} /></button>;
 }
 
-export function MuteButton({ muted, onToggle }: { muted: boolean; onToggle: () => void }) {
-  return <button type="button" className={`icon-button mute-button ${muted ? "muted" : ""}`} onClick={onToggle} aria-pressed={muted} aria-label={muted ? "Unmute microphone" : "Mute microphone"} title={muted ? "Unmute microphone" : "Mute microphone"}><Icon name={muted ? "mic-off" : "mic"} /></button>;
+export function MuteButton({ muted, onToggle, disabled = false }: { muted: boolean; onToggle: () => void; disabled?: boolean }) {
+  return <button type="button" className={`icon-button mute-button ${muted ? "muted" : ""}`} onClick={onToggle} disabled={disabled} aria-pressed={muted} aria-label={muted ? "Unmute microphone" : "Mute microphone"} title={muted ? "Unmute microphone" : "Mute microphone"}><Icon name={muted ? "mic-off" : "mic"} /></button>;
 }

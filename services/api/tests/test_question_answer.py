@@ -9,6 +9,7 @@ from app.question_answer import (
     QuestionProviderRequestError,
     QuestionProviderTimeoutError,
 )
+from app.meta_responses_question_provider import MetaResponsesQuestionProvider
 from app.openai_compatible_question_provider import OpenAICompatibleQuestionProvider
 from app.schemas.questions import QuestionSourceContext
 
@@ -102,3 +103,77 @@ def test_provider_rejects_malformed_model_output(monkeypatch) -> None:
             QuestionSourceContext(mode="page", page_index=0, text="Source text."),
             [],
         )
+
+
+def test_meta_provider_parses_json_output_and_preserves_source_context(monkeypatch) -> None:
+    request_data: dict = {}
+
+    class MetaResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "output_text": json.dumps(
+                    {
+                        "answer": "Photosynthesis uses sunlight.",
+                        "citations": [{"quote": "uses sunlight", "spanIds": ["span-1"]}],
+                        "actions": [{"type": "pdf_highlight", "quote": "uses sunlight"}],
+                    }
+                )
+            }
+
+    def fake_post(url, *, headers, json: dict, timeout):
+        request_data.update({"url": url, "headers": headers, "payload": json, "timeout": timeout})
+        return MetaResponse()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = MetaResponsesQuestionProvider(api_key="server-secret", model="muse-spark-1.3", timeout=12)
+
+    answer = provider.answer(
+        "What does this use?",
+        QuestionSourceContext(mode="selection", page_index=0, text="Photosynthesis uses sunlight.", span_ids=["span-1"]),
+        [],
+    )
+
+    assert answer.answer == "Photosynthesis uses sunlight."
+    assert answer.actions[0].type == "pdf_highlight"
+    assert request_data["url"] == "https://api.meta.ai/v1/responses"
+    assert request_data["headers"]["Authorization"].startswith("Bearer ")
+    assert request_data["payload"]["model"] == "muse-spark-1.3"
+    assert request_data["payload"]["input"][-1]["content"][0]["type"] == "input_text"
+    assert json.loads(request_data["payload"]["input"][-1]["content"][0]["text"]) == {
+        "question": "What does this use?",
+        "sourceText": "Photosynthesis uses sunlight.",
+        "availableSpanIds": ["span-1"],
+    }
+
+
+def test_meta_provider_maps_timeouts_to_recoverable_provider_timeout(monkeypatch) -> None:
+    provider = MetaResponsesQuestionProvider(api_key="server-secret", model="muse-spark-1.3", timeout=1)
+
+    def fake_post(*_args, **_kwargs):
+        raise httpx.TimeoutException("timed out")
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    with pytest.raises(QuestionProviderTimeoutError):
+        provider.answer("Question", QuestionSourceContext(mode="page", page_index=0, text="Source text."), [])
+
+def test_meta_provider_rejects_malformed_model_output(monkeypatch) -> None:
+    provider = MetaResponsesQuestionProvider(api_key="server-secret", model="muse-spark-1.3", timeout=1)
+
+    class MalformedResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"output_text": "not json"}
+
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *_args, **_kwargs: MalformedResponse(),
+    )
+    with pytest.raises(QuestionProviderRequestError):
+        provider.answer("Question", QuestionSourceContext(mode="page", page_index=0, text="Source text."), [])

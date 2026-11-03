@@ -12,6 +12,7 @@ from app.routers.documents import router as documents_router
 from app.routers.users import router as users_router
 from app.routers.settings import router as settings_router
 from app.routers.questions import router as questions_router
+from app.routers.voice import router as voice_router
 
 settings = get_settings()
 logger = logging.getLogger("pixielearn.api")
@@ -88,6 +89,7 @@ app.include_router(health_router)
 app.include_router(users_router)
 app.include_router(settings_router)
 app.include_router(questions_router)
+app.include_router(voice_router)
 app.include_router(documents_router)
 
 

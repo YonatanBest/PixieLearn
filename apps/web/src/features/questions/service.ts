@@ -1,5 +1,5 @@
 import { appConfig } from "../../lib/config";
-import { apiRequest } from "../../lib/api/client";
+import { apiAudioRequest, apiRequest } from "../../lib/api/client";
 
 export type QuestionSourceContext = {
   mode: "selection" | "page";
@@ -14,15 +14,24 @@ export type QuestionCitation = {
   spanIds: string[];
 };
 
+export type LearningQuestionAction =
+  | { type: "pdf_highlight"; pageIndex: number; quote: string }
+  | { type: "whiteboard_label"; text: string; x: number; y: number };
+
 export type LearningQuestion = {
   id: string;
   question: string;
   answer: string | null;
   sourceContext: QuestionSourceContext;
   citations: QuestionCitation[];
+  actions: LearningQuestionAction[];
   status: "pending" | "complete" | "failed";
   failureMessage: string | null;
   createdAt: string;
+};
+
+export type LearningQuestionAudioTranscript = {
+  transcript: string;
 };
 
 export type AskLearningQuestion = {
@@ -52,4 +61,24 @@ export function askLearningQuestion(
     method: "POST",
     body: request,
   });
+}
+
+export function transcribeLearningQuestion(
+  documentId: string,
+  audio: Blob,
+): Promise<LearningQuestionAudioTranscript> {
+  assertAuthenticatedMode();
+  const formData = new FormData();
+  formData.append("file", audio, "voice-question.wav");
+  return apiRequest<LearningQuestionAudioTranscript>(
+    `/documents/${encodeURIComponent(documentId)}/voice/transcribe`,
+    { method: "POST", body: formData },
+  );
+}
+
+export function getLearningQuestionAudio(documentId: string, questionId: string): Promise<Blob> {
+  assertAuthenticatedMode();
+  return apiAudioRequest(
+    `/documents/${encodeURIComponent(documentId)}/questions/${encodeURIComponent(questionId)}/audio`,
+  );
 }

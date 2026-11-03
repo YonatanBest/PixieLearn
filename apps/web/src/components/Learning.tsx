@@ -5,11 +5,14 @@ import type { LearningDocument } from "../features/documents/service";
 import { getDocumentPageText } from "../features/documents/service";
 import { appConfig } from "../lib/config";
 import {
+  getLearningQuestionAudio,
   askLearningQuestion,
   getLearningQuestions,
+  transcribeLearningQuestion,
   type AskLearningQuestion,
   type LearningQuestion,
 } from "../features/questions/service";
+import { encodeMonoPcmWav, VoiceTurnDetector } from "../features/questions/voiceAudio";
 import type {
   DocumentLearningState,
   WhiteboardDiagram,
@@ -25,10 +28,21 @@ const MermaidFigure = lazy(() => import("../features/documents/MermaidFigure"));
 
 export type TeacherState = "teaching" | "quiz" | "feedback" | "question" | "paused" | "complete";
 
-export function LiveCaptions({ transparency, contrast, textSize = "Medium", position = "Bottom center" }: { transparency: number; contrast: number; textSize?: "Small" | "Medium" | "Large"; position?: "Bottom center" | "Center" }) {
+export function LiveCaptions({ text, transparency, contrast, textSize = "Medium", position = "Bottom center" }: { text: string; transparency: number; contrast: number; textSize?: "Small" | "Medium" | "Large"; position?: "Bottom center" | "Center" }) {
+  if (!text.trim()) return null;
   return <div className={`live-captions caption-size-${textSize.toLowerCase()} caption-position-${position === "Center" ? "center" : "bottom"}`} style={{ backgroundColor: `rgba(0, 0, 0, ${(100 - transparency) / 100 * .86})`, filter: `contrast(${contrast}%)` }}>
-    <p>The scaling term keeps the dot products in a useful range, so softmax does not become overly confident.</p>
+    <p>{text}</p>
   </div>;
+}
+
+function getTeachingExplanation(learningLevel: "Beginner" | "Intermediate" | "Advanced"): string {
+  if (learningLevel === "Beginner") {
+    return "Think of the query as a question and each key as a label. Scaling keeps the scores balanced so the model can compare them fairly.";
+  }
+  if (learningLevel === "Advanced") {
+    return "Dividing query-key dot products by the square root of the key dimension stabilizes their variance, preventing softmax saturation and preserving useful gradients.";
+  }
+  return "The query and key vectors determine how strongly tokens relate. Dividing by the square root of the key dimension keeps softmax from becoming overly confident.";
 }
 
 export function HighlightedText({ text, query }: { text: string; query: string }) {
@@ -271,7 +285,7 @@ export function QuizModal({ state, setState, onClose }: { state: TeacherState; s
   </div>;
 }
 
-export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, documentId, currentPage, onNavigateToPage, onClearSelection, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate" }: {
+export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, documentId, currentPage, onNavigateToPage, onClearSelection, onCaptionTextChange, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate" }: {
   state: TeacherState
   setState: (s: TeacherState) => void
   onResizeStart: () => void
@@ -281,20 +295,202 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
   currentPage: number
   onNavigateToPage: (pageIndex: number) => void
   onClearSelection: () => void
+  onCaptionTextChange: (text: string) => void
   autoPlayExplanations?: boolean
   speakingSpeed?: "0.8x" | "1.0x" | "1.2x" | "1.5x"
   voice?: "Pixie · Calm" | "Pixie · Bright"
   learningLevel?: "Beginner" | "Intermediate" | "Advanced"
 }) {
   const [input, setInput] = useState("");
-  const [muted, setMuted] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [questions, setQuestions] = useState<LearningQuestion[]>([]);
   const [questionHistoryError, setQuestionHistoryError] = useState("");
   const [questionLoading, setQuestionLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [voiceStatus, setVoiceStatus] = useState<"idle" | "starting" | "listening" | "transcribing" | "answering">("idle");
+  const [voiceError, setVoiceError] = useState("");
+  const [voiceSourcePage, setVoiceSourcePage] = useState<number | null>(null);
+  const [speechError, setSpeechError] = useState("");
   const temporaryId = useRef(0);
+  const voiceSessionId = useRef(0);
+  const voiceCapture = useRef<{
+    stream: MediaStream;
+    audioContext: AudioContext;
+    source: MediaStreamAudioSourceNode;
+    processor: ScriptProcessorNode;
+    silentOutput: GainNode;
+    sampleRate: number;
+    detector: VoiceTurnDetector;
+    isProcessing: boolean;
+    sourceContext: Omit<AskLearningQuestion, "question">;
+  } | null>(null);
+  const answerAudio = useRef<HTMLAudioElement | null>(null);
+  const answerAudioUrl = useRef<string | null>(null);
   const questionsUnavailable = appConfig.demoMode;
+
+  const releaseVoiceCapture = () => {
+    const capture = voiceCapture.current;
+    if (!capture) return null;
+    voiceCapture.current = null;
+    capture.processor.onaudioprocess = null;
+    capture.processor.disconnect();
+    capture.source.disconnect();
+    capture.silentOutput.disconnect();
+    capture.stream.getTracks().forEach((track) => track.stop());
+    void capture.audioContext.close();
+    return capture;
+  };
+
+  const clearAnswerAudio = () => {
+    answerAudio.current?.pause();
+    answerAudio.current = null;
+    if (answerAudioUrl.current) URL.revokeObjectURL(answerAudioUrl.current);
+    answerAudioUrl.current = null;
+    onCaptionTextChange("");
+  };
+
+  async function processVoiceTurn(
+    capture: NonNullable<typeof voiceCapture.current>,
+    chunks: Float32Array[],
+  ): Promise<void> {
+    setVoiceStatus("transcribing");
+    setVoiceError("");
+    try {
+      const wav = encodeMonoPcmWav(chunks, capture.sampleRate);
+      const transcriptResult = await transcribeLearningQuestion(documentId, new Blob([wav], { type: "audio/wav" }));
+      setVoiceStatus("answering");
+      const saved = await sendQuestion(transcriptResult.transcript, {
+        question: transcriptResult.transcript,
+        ...capture.sourceContext,
+      }, undefined, false);
+      if (saved?.status === "complete") await playAnswer(saved.id, capture, saved.answer ?? "");
+    } catch (reason) {
+      setVoiceError(reason instanceof Error ? reason.message : "The voice question could not be completed. Try again.");
+    } finally {
+      if (voiceCapture.current === capture) {
+        capture.detector.reset();
+        capture.isProcessing = false;
+        setVoiceStatus("listening");
+      }
+    }
+  }
+
+  const startVoiceRecording = async () => {
+    setVoiceError("");
+    const sessionId = ++voiceSessionId.current;
+    setVoiceStatus("starting");
+    if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") {
+      setVoiceStatus("idle");
+      setVoiceError("Voice questions are not supported by this browser.");
+      return;
+    }
+    let stream: MediaStream | null = null;
+    let audioContext: AudioContext | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      if (sessionId !== voiceSessionId.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      audioContext = new AudioContext();
+      await audioContext.resume();
+      if (sessionId !== voiceSessionId.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        void audioContext.close();
+        return;
+      }
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      const silentOutput = audioContext.createGain();
+      silentOutput.gain.value = 0;
+      const capture = {
+        stream,
+        audioContext,
+        source,
+        processor,
+        silentOutput,
+        sampleRate: audioContext.sampleRate,
+        detector: new VoiceTurnDetector(audioContext.sampleRate),
+        isProcessing: false,
+        sourceContext: {
+          pageIndex: selectionContext?.pageIndex ?? currentPage - 1,
+          ...(selectionContext
+            ? { selectedText: selectionContext.text, selectedSpanIds: selectionContext.spanIds }
+            : {}),
+        },
+      };
+      voiceCapture.current = capture;
+      processor.onaudioprocess = (event) => {
+        if (capture.isProcessing || voiceCapture.current !== capture) return;
+        const completedTurn = capture.detector.push(event.inputBuffer.getChannelData(0));
+        if (completedTurn) {
+          capture.isProcessing = true;
+          void processVoiceTurn(capture, completedTurn);
+        }
+      };
+      source.connect(processor);
+      processor.connect(silentOutput);
+      silentOutput.connect(audioContext.destination);
+      setVoiceSourcePage(capture.sourceContext.pageIndex + 1);
+      setVoiceStatus("listening");
+    } catch (reason) {
+      if (sessionId !== voiceSessionId.current) return;
+      releaseVoiceCapture();
+      stream?.getTracks().forEach((track) => track.stop());
+      if (audioContext && audioContext.state !== "closed") void audioContext.close();
+      setVoiceStatus("idle");
+      setVoiceError(reason instanceof Error && reason.name === "NotAllowedError"
+        ? "Microphone access was denied. Allow microphone access and try again."
+        : "The microphone could not be started. Check your device and try again.");
+    }
+  };
+
+  const stopVoiceConversation = () => {
+    voiceSessionId.current += 1;
+    releaseVoiceCapture();
+    clearAnswerAudio();
+    setVoiceSourcePage(null);
+    setVoiceStatus("idle");
+  }
+
+  async function playAnswer(
+    questionId: string,
+    resumeCapture?: NonNullable<typeof voiceCapture.current>,
+    spokenText = questions.find((item) => item.id === questionId)?.answer ?? "",
+  ): Promise<void> {
+    setSpeechError("");
+    try {
+      clearAnswerAudio();
+      const audioBlob = await getLearningQuestionAudio(documentId, questionId);
+      if (resumeCapture && voiceCapture.current !== resumeCapture) return;
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      answerAudioUrl.current = audioUrl;
+      answerAudio.current = audio;
+      onCaptionTextChange(spokenText);
+      await new Promise<void>((resolve, reject) => {
+        audio.onended = () => resolve();
+        audio.onpause = () => resolve();
+        audio.onerror = () => reject(new Error("Tutor audio could not be played. Try again."));
+        void audio.play().catch(reject);
+      });
+    } catch (reason) {
+      if (!resumeCapture || voiceCapture.current === resumeCapture) {
+        setSpeechError(reason instanceof Error ? reason.message : "Tutor audio could not be played. Try again.");
+      }
+    } finally {
+      if (answerAudio.current) clearAnswerAudio();
+      else onCaptionTextChange("");
+    }
+  }
+
+  useEffect(() => () => {
+    releaseVoiceCapture();
+    answerAudio.current?.pause();
+    if (answerAudioUrl.current) URL.revokeObjectURL(answerAudioUrl.current);
+  }, []);
   useEffect(() => {
     let active = true;
     setHistoryLoading(true);
@@ -315,25 +511,29 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
   useEffect(() => {
     if (!("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
+    onCaptionTextChange("");
     if (!autoPlayExplanations || state !== "teaching") return;
-    const utterance = new SpeechSynthesisUtterance(
-      learningLevel === "Beginner"
-        ? "Think of the query as a question and each key as a label. Scaling keeps the scores balanced so the model can compare them fairly."
-        : learningLevel === "Advanced"
-          ? "Dividing query-key dot products by the square root of the key dimension stabilizes their variance, preventing softmax saturation and preserving useful gradients."
-          : "The query and key vectors determine how strongly tokens relate. Dividing by the square root of the key dimension keeps softmax from becoming overly confident.",
-    );
+    const text = getTeachingExplanation(learningLevel);
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onstart = () => onCaptionTextChange(text);
+    utterance.onend = () => onCaptionTextChange("");
+    utterance.onerror = () => onCaptionTextChange("");
     utterance.rate = Number(speakingSpeed.slice(0, -1));
     utterance.pitch = voice === "Pixie · Bright" ? 1.15 : 0.9;
     window.speechSynthesis.speak(utterance);
-    return () => window.speechSynthesis.cancel();
-  }, [autoPlayExplanations, learningLevel, speakingSpeed, state, voice]);
-  const sendQuestion = async (
+    return () => {
+      window.speechSynthesis.cancel();
+      onCaptionTextChange("");
+    };
+  }, [autoPlayExplanations, learningLevel, onCaptionTextChange, speakingSpeed, state, voice]);
+  async function sendQuestion(
     question: string,
     source: AskLearningQuestion,
     replaceId?: string,
-  ) => {
-    if (!question.trim() || questionLoading) return;
+    autoPlayAnswer = true,
+  ): Promise<LearningQuestion | null> {
+    if (!question.trim() || questionLoading) return null;
+    if (!replaceId) setInput("");
     const localId = replaceId ?? `pending-${++temporaryId.current}`;
     const pendingQuestion: LearningQuestion = {
       id: localId,
@@ -346,6 +546,7 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
         spanIds: source.selectedSpanIds ?? [],
       },
       citations: [],
+      actions: [],
       status: "pending",
       failureMessage: null,
       createdAt: new Date().toISOString(),
@@ -358,16 +559,20 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
     try {
       const saved = await askLearningQuestion(documentId, source);
       setQuestions((current) => current.map((item) => item.id === localId ? saved : item));
-      setInput("");
+      if (autoPlayAnswer && saved.status === "complete") {
+        void playAnswer(saved.id, undefined, saved.answer ?? "");
+      }
+      return saved;
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Pixie could not answer this question. Try again.";
       setQuestions((current) => current.map((item) => item.id === localId
         ? { ...item, status: "failed", failureMessage: message }
         : item));
+      return null;
     } finally {
       setQuestionLoading(false);
     }
-  };
+  }
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const question = input.trim();
@@ -431,9 +636,17 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
                   Page {citation.pageIndex + 1}: “{citation.quote}”
                 </button>
               ))}
+              {item.status === "complete" && item.actions.map((action, index) => action.type === "pdf_highlight"
+                ? <button className="question-action-proposal" key={`${action.type}-${index}`} onClick={() => onNavigateToPage(action.pageIndex)}>
+                  PDF highlight suggestion · Page {action.pageIndex + 1}: “{action.quote}”
+                </button>
+                : <div className="question-action-proposal" key={`${action.type}-${index}`}>
+                  Whiteboard note suggestion: “{action.text}” · position {Math.round(action.x * 100)}%, {Math.round(action.y * 100)}%
+                </div>)}
             </div>
           </div>
         ))}
+        {speechError && <p className="question-error" role="alert">{speechError}</p>}
         {historyLoading && <p className="question-history-status" role="status">Loading saved questions…</p>}
         {!historyLoading && questions.length === 0 && !transcript.length && (
           <>
@@ -447,10 +660,29 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
     <div className="teacher-input-area">
       {addMenuOpen && <div className="add-menu" role="menu"><button role="menuitem" onClick={() => setAddMenuOpen(false)}><Icon name="upload" />Attach file</button><button role="menuitem" onClick={() => setAddMenuOpen(false)}><Icon name="expand" />Add screenshot</button><button role="menuitem" onClick={() => { onClearSelection(); setAddMenuOpen(false); }}><Icon name="file" />Use current page</button><button role="menuitem" onClick={() => { setInput("Save this as a note: "); setAddMenuOpen(false); }}><Icon name="note" />Add note</button></div>}
       <div className="question-source-context" role="status">
-        Using {selectionContext ? `selected passage · page ${selectionContext.pageIndex + 1}` : `current page · page ${currentPage}`}
-        {selectionContext && <button type="button" onClick={onClearSelection}>Clear selection</button>}
+        Using {voiceSourcePage !== null
+          ? `voice conversation · page ${voiceSourcePage}`
+          : selectionContext ? `selected passage · page ${selectionContext.pageIndex + 1}` : `current page · page ${currentPage}`}
+        {selectionContext && <button type="button" onClick={() => {
+          onClearSelection();
+          if (voiceStatus === "idle") setVoiceSourcePage(null);
+        }}>Clear selection</button>}
       </div>
-      <form className="ask-form" onSubmit={submit}><button type="button" className={`input-add ${addMenuOpen ? "active" : ""}`} onClick={() => setAddMenuOpen(!addMenuOpen)} aria-label="Add to question" aria-expanded={addMenuOpen}><Icon name="plus" /></button><input value={input} onChange={(e) => setInput(e.target.value)} placeholder={questionsUnavailable ? "Sign in to ask questions" : "Ask about this page..."} aria-label="Ask your teacher" disabled={questionsUnavailable} /><MuteButton muted={muted} onToggle={() => setMuted(!muted)} /><button className="send-button" type="submit" aria-label="Send question" disabled={questionsUnavailable || questionLoading || !input.trim()}>{questionLoading ? <span className="question-spinner" aria-hidden="true" /> : <Icon name="send" />}</button></form>
+      {!questionsUnavailable && <div className="voice-question-status">
+        <span aria-live="polite">
+          {voiceStatus === "listening"
+            ? "Listening · Pixie sends your turn after 1.2 seconds of silence."
+            : voiceStatus === "transcribing"
+              ? "I heard you · transcribing your question…"
+              : voiceStatus === "answering"
+                ? "Pixie is answering · the microphone will listen again after the reply."
+                : voiceStatus === "starting"
+                  ? "Connecting to your microphone…"
+                  : "Microphone muted · unmute to start a voice conversation."}
+        </span>
+      </div>}
+      {voiceError && <p className="question-error" role="alert">{voiceError}</p>}
+      <form className="ask-form" onSubmit={submit}><button type="button" className={`input-add ${addMenuOpen ? "active" : ""}`} onClick={() => setAddMenuOpen(!addMenuOpen)} aria-label="Add to question" aria-expanded={addMenuOpen}><Icon name="plus" /></button><input value={input} onChange={(e) => setInput(e.target.value)} placeholder={questionsUnavailable ? "Sign in to ask questions" : "Ask about this page..."} aria-label="Ask your teacher" disabled={questionsUnavailable || voiceStatus !== "idle"} /><MuteButton muted={voiceStatus === "idle" || voiceStatus === "starting"} onToggle={() => voiceStatus === "idle" ? void startVoiceRecording() : stopVoiceConversation()} disabled={questionsUnavailable || voiceStatus === "starting" || (voiceStatus === "idle" && questionLoading)} /><button className="send-button" type="submit" aria-label="Send question" disabled={questionsUnavailable || questionLoading || voiceStatus !== "idle" || !input.trim()}>{questionLoading ? <span className="question-spinner" aria-hidden="true" /> : <Icon name="send" />}</button></form>
     </div>
   </aside>;
 }
@@ -464,6 +696,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   const [zoom, setZoom] = useState(defaultZoom);
   const [currentPage, setCurrentPage] = useState(1);
   const [transcript, setTranscript] = useState<TranscriptMessage[]>([]);
+  const [captionText, setCaptionText] = useState("");
   const [teacherWidth, setTeacherWidth] = useState(350);
   const [captionControlsVisible, setCaptionControlsVisible] = useState(false);
   const captionControlsTimer = useRef<number | undefined>(undefined);
@@ -685,14 +918,14 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
             ? <DocumentPage page={currentPage} searchQuery={searchQuery} />
             : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} searchQuery={searchQuery} onAskSelection={(text, pageIndex, spanIds) => setSelectionContext({ text, pageIndex, spanIds })} />}
         </Suspense>
-        {captionsEnabled && <LiveCaptions transparency={captionTransparency} contrast={captionContrast} textSize={captionTextSize} position={captionPosition} />}
       </section>
-      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} documentId={learningDocument.id} currentPage={currentPage} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} onClearSelection={() => setSelectionContext(null)} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} onResizeStart={() => {
+      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} documentId={learningDocument.id} currentPage={currentPage} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} onClearSelection={() => setSelectionContext(null)} onCaptionTextChange={setCaptionText} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} onResizeStart={() => {
         resizing.current = true;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
       }} />
     </div>
+    {captionsEnabled && <div className="workspace-caption-overlay" style={{ "--teacher-panel-width": `${teacherWidth}px` } as React.CSSProperties}><LiveCaptions text={captionText} transparency={captionTransparency} contrast={captionContrast} textSize={captionTextSize} position={captionPosition} /></div>}
     {boardOpen && <Whiteboard onClose={() => { setBoardOpen(false); checkpoint({ whiteboardOpen: false }); }} drawing={whiteboardDrawing} onDrawingChange={setWhiteboardDrawing} diagrams={whiteboardDiagrams} onDiagramsChange={setWhiteboardDiagrams} />}
     <footer className="lesson-controls">
       <div className="lesson-main-controls">

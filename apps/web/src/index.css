@@ -265,6 +265,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 [data-theme="light"] .search-scope { background: #f3f3f3; }
 [data-theme="light"] .search-scope button.active { color: #202020; background: #e1e1e1; }
 .learning-area { min-height: 0; display: grid; grid-template-columns: minmax(460px, 1fr) 350px; }
+.workspace-caption-overlay { position: absolute; inset: 56px calc(var(--teacher-panel-width, 350px) + 1px) 66px 0; z-index: 7; pointer-events: none; }
 .document-stage { min-width: 0; overflow: auto; background-color: var(--stage); background-image: radial-gradient(var(--stage-dot) 1px, transparent 1px); background-size: 16px 16px; padding: 14px 24px 40px; position: relative; }
 .learning-pdf-stage { padding: 14px; }
 .learning-pdf-stage .text-preview { margin: 0; min-height: 100%; }
@@ -358,6 +359,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .transcript-message { padding: 9px 11px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border-soft); }
 .transcript-user { border-left: 2px solid var(--violet); }
 .transcript-assistant { border-left: 2px solid var(--green); }
+.question-exchange > .transcript-user { justify-self: end; width: fit-content; max-width: 92%; background: var(--violet-soft); }
+.question-exchange > .transcript-assistant { justify-self: start; width: 100%; }
 .transcript-message small { color: var(--muted); font-size: calc(8px * var(--ui-font-scale, 1)); font-weight: 700; letter-spacing: .08em; }
 .transcript-message p { color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.5; margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .question-exchange { display: grid; gap: 8px; }
@@ -367,6 +370,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .question-citation { display: block; margin: 8px 0 0; padding: 0; line-height: 1.4; }
 .question-citation:hover, .question-source-context button:hover { text-decoration: underline; }
 .question-error { margin: 0 8px 8px; color: var(--red, #d75d51); font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.4; }
+.question-audio-button, .question-action-proposal { margin: 8px 8px 0 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: calc(9px * var(--ui-font-scale, 1)); line-height: 1.4; text-align: left; }
+.question-audio-button, button.question-action-proposal { cursor: pointer; }
+.question-audio-button:hover, button.question-action-proposal:hover { border-color: var(--violet); }
+.question-action-proposal { display: block; overflow-wrap: anywhere; }
+.voice-question-status { margin: 0 8px 8px; color: var(--muted); font-size: calc(9px * var(--ui-font-scale, 1)); line-height: 1.35; }
+.voice-question-status span { display: block; min-width: 0; }
 .question-history-status { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1)); }
 .question-spinner { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: question-spin .7s linear infinite; }
 @keyframes question-spin { to { transform: rotate(360deg); } }
@@ -383,6 +392,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .ask-form input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font-size: calc(10px * var(--ui-font-scale, 1)); }
 .ask-form input::placeholder { color: var(--muted-2); }
 .mute-button { flex: 0 0 30px; }
+.mute-button:disabled { cursor: not-allowed; opacity: .55; }
 .mute-button.muted { color: var(--red); background: rgba(221,131,125,.1); }
 .mute-button.muted:hover { color: #f0a09a; background: rgba(221,131,125,.16); }
 .send-button { width: 38px; height: 38px; flex: 0 0 38px; border: 0; border-radius: 50%; background: var(--send-bg); color: var(--send-text); display: grid; place-items: center; cursor: pointer; }
@@ -415,6 +425,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .live-captions.caption-size-small p { font-size: calc(10px * var(--ui-font-scale, 1)); }
 .live-captions.caption-size-large p { font-size: calc(16px * var(--ui-font-scale, 1)); }
 .live-captions.caption-position-center { top: 50%; bottom: auto; transform: translate(-50%, -50%); }
+.workspace-caption-overlay .live-captions { width: min(650px, calc(100% - 32px)); min-width: 0; }
 
 .whiteboard-backdrop { position: absolute; inset: 56px 0 66px; z-index: 20; display: grid; place-items: center; padding: 28px; background: rgba(6, 7, 9, .62); backdrop-filter: blur(3px); animation: board-backdrop-in .18s ease-out; }
 .quiz-backdrop { position: absolute; inset: 56px 0 66px; z-index: 19; display: grid; place-items: center; padding: 28px; background: rgba(6, 7, 9, .62); backdrop-filter: blur(3px); animation: board-backdrop-in .18s ease-out; }

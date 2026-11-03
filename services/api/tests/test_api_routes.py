@@ -1,7 +1,10 @@
+import base64
 import httpx
 import json
 import logging
+import wave
 from datetime import UTC, datetime
+from io import BytesIO
 from uuid import UUID, uuid4
 
 import pytest
@@ -1263,6 +1266,193 @@ def test_learning_question_rejects_provider_citations_outside_context(document_a
         ))
     assert record is not None
     assert record.status == "failed"
+    assert record.failure_message
+
+
+def test_learning_question_persists_source_verified_action_proposals(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    provider = FakeQuestionAnswerProvider(
+        answer=QuestionAnswer(
+            answer="Photosynthesis uses sunlight.",
+            citations=[QuestionCitation(quote="uses sunlight", span_ids=["span-1", "span-2"])],
+            actions=[
+                {"type": "pdf_highlight", "quote": "uses sunlight"},
+                {"type": "whiteboard_label", "text": "make glucose", "x": 0.4, "y": 0.6},
+            ],
+        )
+    )
+    monkeypatch.setitem(app.dependency_overrides, get_question_provider, lambda: provider)
+
+    response = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "What does it use?", "pageIndex": 0},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["actions"] == [
+        {"type": "pdf_highlight", "pageIndex": 0, "quote": "uses sunlight"},
+        {"type": "whiteboard_label", "text": "make glucose", "x": 0.4, "y": 0.6},
+    ]
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"type": "pdf_highlight", "quote": "not in the source"},
+        {"type": "pdf_highlight", "quote": "   "},
+        {"type": "whiteboard_label", "text": "invented label", "x": 0.5, "y": 0.5},
+    ],
+)
+def test_learning_question_rejects_unverified_action_proposals(document_api, monkeypatch, action) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    provider = FakeQuestionAnswerProvider(
+        answer=QuestionAnswer(
+            answer="Photosynthesis uses sunlight.",
+            citations=[QuestionCitation(quote="uses sunlight", span_ids=["span-1", "span-2"])],
+            actions=[action],
+        )
+    )
+    monkeypatch.setitem(app.dependency_overrides, get_question_provider, lambda: provider)
+
+    response = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "What does it use?", "pageIndex": 0},
+    )
+
+    assert response.status_code == 502
+    with sessions() as session:
+        record = session.scalar(select(LearningQuestionRecord).where(
+            LearningQuestionRecord.document_id == document_id,
+        ))
+    assert record is not None
+    assert record.status == "failed"
+    assert record.actions == []
+
+
+def create_wav(sample_rate: int = 24_000, seconds: int = 1) -> bytes:
+    buffer = BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(b"\0\0" * sample_rate * seconds)
+    return buffer.getvalue()
+
+
+def test_voice_transcription_forwards_valid_wav_to_meta(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_settings,
+        lambda: Settings(meta_model_api_key="test-meta-key"),
+    )
+    request_details: dict = {}
+
+    def fake_post(url, *, headers, data, files, timeout):
+        request_details.update({"url": url, "headers": headers, "data": data, "files": files, "timeout": timeout})
+        return httpx.Response(200, json={"transcript": "What uses sunlight?"}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    response = client.post(
+        f"/api/documents/{document_id}/voice/transcribe",
+        files={"file": ("voice-question.wav", create_wav(seconds=61), "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"transcript": "What uses sunlight?"}
+    assert request_details["url"] == "https://api.meta.ai/v1/asr/transcribe"
+    assert request_details["headers"]["Authorization"].startswith("Bearer ")
+    assert request_details["files"]["audio"][2] == "audio/wav"
+
+
+def test_voice_transcription_rejects_invalid_wav_before_provider_call(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_settings,
+        lambda: Settings(meta_model_api_key="test-meta-key"),
+    )
+    monkeypatch.setattr(httpx, "post", lambda *_args, **_kwargs: pytest.fail("Provider should not be called"))
+
+    response = client.post(
+        f"/api/documents/{document_id}/voice/transcribe",
+        files={"file": ("voice-question.wav", create_wav(sample_rate=16_000), "audio/wav")},
+    )
+
+    assert response.status_code == 422
+
+
+def test_voice_transcription_does_not_disclose_a_different_users_document(document_api) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions, owner_id="learner-2")
+
+    response = client.post(
+        f"/api/documents/{document_id}/voice/transcribe",
+        files={"file": ("voice-question.wav", create_wav(), "audio/wav")},
+    )
+
+    assert response.status_code == 404
+
+
+def test_saved_answer_audio_returns_wav_from_gemini(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    question_id = uuid4()
+    answer_wav = create_wav(seconds=1)
+    with sessions() as session:
+        session.add(
+            LearningQuestionRecord(
+                id=question_id,
+                document_id=document_id,
+                owner_id="learner-1",
+                question="What uses sunlight?",
+                answer="Photosynthesis uses sunlight.",
+                source_context=QuestionSourceContext(
+                    mode="page",
+                    page_index=0,
+                    text="Photosynthesis uses sunlight to make glucose.",
+                    span_ids=["span-1", "span-2"],
+                ).model_dump(mode="json", by_alias=True),
+                citations=[],
+                actions=[],
+                status="complete",
+                created_at=datetime.now(UTC),
+            )
+        )
+        session.commit()
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_settings,
+        lambda: Settings(gemini_api_key="test-gemini-key"),
+    )
+    request_details: dict = {}
+
+    def fake_post(url, *, headers, json, timeout):
+        request_details.update({"url": url, "headers": headers, "payload": json, "timeout": timeout})
+        return httpx.Response(
+            200,
+            json={
+                "steps": [
+                    {
+                        "type": "model_output",
+                        "content": [{"type": "audio", "data": base64.b64encode(answer_wav).decode("ascii")}],
+                    }
+                ]
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    response = client.get(f"/api/documents/{document_id}/questions/{question_id}/audio")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == answer_wav
+    assert request_details["headers"]["x-goog-api-key"] == "test-gemini-key"
 
 
 def test_learning_questions_require_authentication(document_api, monkeypatch) -> None:
