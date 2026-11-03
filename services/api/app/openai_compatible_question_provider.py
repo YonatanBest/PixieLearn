@@ -36,8 +36,23 @@ class OpenAICompatibleQuestionProvider:
         history: list[dict[str, str]],
         *,
         intent: TutorIntent = "ask",
+        whiteboard_image: str | None = None,
     ) -> QuestionAnswer:
         headers = {"Content-Type": "application/json"}
+        learner_context: str | list[dict[str, object]] = json.dumps(
+            {
+                "question": question,
+                "intent": intent,
+                "sourceText": source.text,
+                "availableSpanIds": source.span_ids,
+            },
+            ensure_ascii=False,
+        )
+        if whiteboard_image:
+            learner_context = [
+                {"type": "text", "text": learner_context},
+                {"type": "image_url", "image_url": {"url": whiteboard_image}},
+            ]
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         request = {
@@ -47,6 +62,8 @@ class OpenAICompatibleQuestionProvider:
                     "role": "system",
                     "content": (
                         f"{INTENT_INSTRUCTIONS[intent]} Answer the learner using only the supplied source context. "
+                        "When a whiteboard image is supplied, discuss observable marks and use them as learner context, "
+                        "not as verified source evidence. "
                         "Return JSON with answer, citations, and actions. Each citation must include "
                         "a verbatim quote and supported span IDs. Actions may be empty; use only "
                         "pdf_highlight with a verbatim source quote or whiteboard_label with a "
@@ -57,15 +74,7 @@ class OpenAICompatibleQuestionProvider:
                 *history,
                 {
                     "role": "user",
-                    "content": json.dumps(
-                        {
-                            "question": question,
-                            "intent": intent,
-                            "sourceText": source.text,
-                            "availableSpanIds": source.span_ids,
-                        },
-                        ensure_ascii=False,
-                    ),
+                    "content": learner_context,
                 },
             ],
             "max_tokens": 1_200,

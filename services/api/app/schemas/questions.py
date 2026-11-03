@@ -1,12 +1,15 @@
+import base64
+import binascii
 from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 
 TutorIntent = Literal["ask", "repeat", "simpler", "deeper", "quiz"]
+MAX_WHITEBOARD_IMAGE_BYTES = 1_048_576
 
 
 class LearningQuestionCreate(BaseModel):
@@ -17,6 +20,30 @@ class LearningQuestionCreate(BaseModel):
     intent: TutorIntent = "ask"
     selected_text: str | None = Field(default=None, min_length=1, max_length=10_000)
     selected_span_ids: list[str] = Field(default_factory=list, max_length=500)
+    whiteboard_image: str | None = Field(default=None, max_length=1_398_200)
+
+    @field_validator("whiteboard_image")
+    @classmethod
+    def validate_whiteboard_image(cls, image: str | None) -> str | None:
+        if image is None:
+            return None
+        prefix, separator, encoded = image.partition(",")
+        allowed_types = {
+            "data:image/jpeg;base64": b"\xff\xd8\xff",
+            "data:image/png;base64": b"\x89PNG\r\n\x1a\n",
+        }
+        signature = allowed_types.get(prefix)
+        if not separator or signature is None:
+            raise ValueError("Whiteboard context must be a base64 JPEG or PNG image.")
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise ValueError("Whiteboard context must be valid base64 image data.") from error
+        if not decoded or len(decoded) > MAX_WHITEBOARD_IMAGE_BYTES:
+            raise ValueError("Whiteboard context images must be between 1 byte and 1 MiB.")
+        if not decoded.startswith(signature):
+            raise ValueError("Whiteboard context image data does not match its media type.")
+        return image
 
 
 class QuestionSourceContext(BaseModel):

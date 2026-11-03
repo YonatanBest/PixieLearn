@@ -27,6 +27,7 @@ class MetaResponsesQuestionProvider:
         history: list[dict[str, str]],
         *,
         intent: TutorIntent = "ask",
+        whiteboard_image: str | None = None,
     ) -> QuestionAnswer:
         input_messages = [
             {
@@ -52,10 +53,20 @@ class MetaResponsesQuestionProvider:
                                 "intent": intent,
                                 "sourceText": source.text,
                                 "availableSpanIds": source.span_ids,
+                                "visualContext": (
+                                    "A snapshot of the learner's current whiteboard follows."
+                                    if whiteboard_image
+                                    else None
+                                ),
                             },
                             ensure_ascii=False,
                         ),
-                    }
+                    },
+                    *(
+                        [{"type": "input_image", "image_url": whiteboard_image}]
+                        if whiteboard_image
+                        else []
+                    ),
                 ],
             }
         )
@@ -67,7 +78,9 @@ class MetaResponsesQuestionProvider:
                 "Return a single JSON object with answer, citations, and actions. Each citation must "
                 "contain a verbatim quote and supported spanIds. Actions may be empty; use only "
                 "pdf_highlight with a verbatim source quote or whiteboard_label with a verbatim "
-                "source label and normalized x/y coordinates from 0 to 1. Actions are proposals, "
+                "source label and normalized x/y coordinates from 0 to 1. When a whiteboard image "
+                "is supplied, discuss observable learner marks but do not treat them as verified "
+                "source evidence. Actions are proposals, "
                 "not commands, and must not invent facts."
             ),
             "input": input_messages,

@@ -8,6 +8,7 @@ import {
   getLearningQuestions,
   transcribeLearningQuestion,
 } from "../features/questions/service";
+import { createWhiteboardSnapshot } from "../features/questions/whiteboardSnapshot";
 import { LiveCaptions, Workspace } from "./Learning";
 
 vi.mock("../lib/config", () => ({
@@ -19,6 +20,10 @@ vi.mock("../features/questions/service", () => ({
   askLearningQuestion: vi.fn(),
   getLearningQuestionAudio: vi.fn(),
   transcribeLearningQuestion: vi.fn(),
+}));
+
+vi.mock("../features/questions/whiteboardSnapshot", () => ({
+  createWhiteboardSnapshot: vi.fn(() => Promise.resolve("data:image/jpeg;base64,/9j/c3ludGhldGlj")),
 }));
 
 vi.mock("../features/documents/DocumentTextPreview", () => ({
@@ -140,6 +145,71 @@ describe("learning workspace document session", () => {
 
     expect(container.querySelector(".live-captions")?.textContent).toBe("Plants use sunlight to make sugar.");
     expect(container.textContent).not.toContain("The scaling term keeps the dot products");
+  });
+
+  it("sends the current whiteboard snapshot with the selected PDF context", async () => {
+    const drawing = [{
+      points: [{ x: 0.1, y: 0.2 }, { x: 0.8, y: 0.7 }],
+      color: "#6f62d9" as const,
+      width: 3,
+    }];
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<Workspace
+        openFloating={() => undefined}
+        captionsEnabled={false}
+        setCaptionsEnabled={() => undefined}
+        captionTransparency={18}
+        setCaptionTransparency={() => undefined}
+        captionContrast={100}
+        setCaptionContrast={() => undefined}
+        learningDocument={{ id: "document-42", filename: "photosynthesis.pdf", pageCount: 8 }}
+        learningState={{
+          documentId: "document-42",
+          pageIndex: 2,
+          pageCount: 8,
+          zoom: 100,
+          lastOpenedAt: "2026-10-23T10:00:00Z",
+          hasSavedState: true,
+          workspaceState: {
+            teacherState: "teaching",
+            selectionContext: { text: "Plants need sunlight", pageIndex: 2, spanIds: ["span-1"] },
+            transcript: [],
+            whiteboardOpen: false,
+            whiteboardDrawing: drawing,
+            whiteboardDiagrams: [],
+            captionsEnabled: false,
+            captionTransparency: 18,
+            captionContrast: 100,
+          },
+        }}
+        onWorkspaceChange={() => undefined}
+        onWorkspaceCheckpoint={() => undefined}
+        onOpenDocument={() => undefined}
+      />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Ask Pixie about my drawing"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(createWhiteboardSnapshot).toHaveBeenCalledWith(drawing);
+    expect(askLearningQuestion).toHaveBeenCalledWith("document-42", {
+      question: "What does my drawing show, and how does it relate to this page?",
+      intent: "ask",
+      pageIndex: 2,
+      selectedText: "Plants need sunlight",
+      selectedSpanIds: ["span-1"],
+      whiteboardImage: "data:image/jpeg;base64,/9j/c3ludGhldGlj",
+    });
+    expect(container.textContent).toContain("WHITEBOARD SNAPSHOT");
+    expect(container.textContent).toContain("Your current page context and whiteboard snapshot are included in this question.");
   });
 
   it("automatically sends a voice question after silence and listens for another turn", async () => {

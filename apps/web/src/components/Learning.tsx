@@ -12,6 +12,7 @@ import {
   type AskLearningQuestion,
   type LearningQuestion,
 } from "../features/questions/service";
+import { createWhiteboardSnapshot } from "../features/questions/whiteboardSnapshot";
 import { encodeMonoPcmWav, VoiceTurnDetector } from "../features/questions/voiceAudio";
 import type {
   DocumentLearningState,
@@ -27,6 +28,13 @@ const DocumentTextPreview = lazy(() => import("../features/documents/DocumentTex
 const MermaidFigure = lazy(() => import("../features/documents/MermaidFigure"));
 
 export type TeacherState = "teaching" | "quiz" | "feedback" | "question" | "paused" | "complete";
+type DrawingQuestionRequest = {
+  id: number;
+  pageIndex: number;
+  selectedText?: string;
+  selectedSpanIds?: string[];
+  whiteboardImage: string;
+};
 
 export function LiveCaptions({ text, transparency, contrast, textSize = "Medium", position = "Bottom center" }: { text: string; transparency: number; contrast: number; textSize?: "Small" | "Medium" | "Large"; position?: "Bottom center" | "Center" }) {
   if (!text.trim()) return null;
@@ -285,7 +293,7 @@ export function QuizModal({ state, setState, onClose }: { state: TeacherState; s
   </div>;
 }
 
-export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, documentId, currentPage, onNavigateToPage, onClearSelection, onCaptionTextChange, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate" }: {
+export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, documentId, currentPage, onNavigateToPage, onClearSelection, onCaptionTextChange, drawingTurn, onDrawingTurnHandled, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate" }: {
   state: TeacherState
   setState: (s: TeacherState) => void
   onResizeStart: () => void
@@ -296,6 +304,8 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
   onNavigateToPage: (pageIndex: number) => void
   onClearSelection: () => void
   onCaptionTextChange: (text: string) => void
+  drawingTurn: DrawingQuestionRequest | null
+  onDrawingTurnHandled: (id: number) => void
   autoPlayExplanations?: boolean
   speakingSpeed?: "0.8x" | "1.0x" | "1.2x" | "1.5x"
   voice?: "Pixie · Calm" | "Pixie · Bright"
@@ -545,6 +555,7 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
         text: source.selectedText ?? "",
         spanIds: source.selectedSpanIds ?? [],
       },
+      visualContextSent: Boolean(source.whiteboardImage),
       citations: [],
       actions: [],
       status: "pending",
@@ -558,7 +569,9 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
     setState("question");
     try {
       const saved = await askLearningQuestion(documentId, source);
-      setQuestions((current) => current.map((item) => item.id === localId ? saved : item));
+      setQuestions((current) => current.map((item) => item.id === localId
+        ? { ...saved, visualContextSent: Boolean(source.whiteboardImage) }
+        : item));
       if (autoPlayAnswer && saved.status === "complete") {
         void playAnswer(saved.id, undefined, saved.answer ?? "");
       }
@@ -589,6 +602,23 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
     };
     void sendQuestion(question, source);
   };
+  const processedDrawingTurn = useRef<number | null>(null);
+  useEffect(() => {
+    if (!drawingTurn || questionLoading || processedDrawingTurn.current === drawingTurn.id) return;
+    processedDrawingTurn.current = drawingTurn.id;
+    void sendQuestion("What does my drawing show, and how does it relate to this page?", {
+      question: "What does my drawing show, and how does it relate to this page?",
+      intent: "ask",
+      pageIndex: drawingTurn.pageIndex,
+      ...(drawingTurn.selectedText
+        ? {
+          selectedText: drawingTurn.selectedText,
+          selectedSpanIds: drawingTurn.selectedSpanIds,
+        }
+        : {}),
+      whiteboardImage: drawingTurn.whiteboardImage,
+    }).finally(() => onDrawingTurnHandled(drawingTurn.id));
+  }, [drawingTurn, onDrawingTurnHandled, questionLoading]);
   return <aside className="teacher-panel">
     <span className="teacher-resize-handle" role="separator" aria-label="Resize teacher panel" onPointerDown={onResizeStart} />
     {state === "paused" ? <div className="teacher-content centered-state">
@@ -619,7 +649,7 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
               <p>{item.question}</p>
             </div>
             <div className="transcript-message transcript-assistant">
-              <small>PIXIE · {item.sourceContext.mode === "selection" ? "SELECTED PASSAGE" : "CURRENT PAGE"}</small>
+              <small>PIXIE · {item.sourceContext.mode === "selection" ? "SELECTED PASSAGE" : "CURRENT PAGE"}{item.visualContextSent ? " + WHITEBOARD SNAPSHOT" : ""}</small>
               {item.status === "pending"
                 ? <p role="status">Thinking about your question…</p>
                 : item.status === "failed"
@@ -692,6 +722,9 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   const [boardOpen, setBoardOpen] = useState(false);
   const [whiteboardDrawing, setWhiteboardDrawing] = useState<WhiteboardStroke[]>([]);
   const [whiteboardDiagrams, setWhiteboardDiagrams] = useState<WhiteboardDiagram[]>([]);
+  const [drawingTurn, setDrawingTurn] = useState<DrawingQuestionRequest | null>(null);
+  const [drawingContextStatus, setDrawingContextStatus] = useState("");
+  const drawingTurnId = useRef(0);
   const defaultZoom = defaultDocumentZoom === "100%" ? 100 : defaultDocumentZoom === "120%" ? 120 : 84;
   const [zoom, setZoom] = useState(defaultZoom);
   const [currentPage, setCurrentPage] = useState(1);
@@ -766,6 +799,31 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     if (nextState === "paused" || nextState === "complete") {
       checkpoint({ teacherState: nextState });
     }
+  };
+  const askAboutDrawing = async () => {
+    if (appConfig.demoMode || drawingTurn) return;
+    setDrawingContextStatus("Preparing a snapshot of your whiteboard…");
+    try {
+      const whiteboardImage = await createWhiteboardSnapshot(whiteboardDrawing);
+      if (!whiteboardImage) {
+        setDrawingContextStatus("Draw on the whiteboard before asking Pixie for feedback.");
+        return;
+      }
+      setDrawingTurn({
+        id: ++drawingTurnId.current,
+        pageIndex: selectionContext?.pageIndex ?? currentPage - 1,
+        ...(selectionContext
+          ? { selectedText: selectionContext.text, selectedSpanIds: selectionContext.spanIds }
+          : {}),
+        whiteboardImage,
+      });
+      setDrawingContextStatus("Your current page context and whiteboard snapshot are included in this question.");
+    } catch (reason) {
+      setDrawingContextStatus(reason instanceof Error ? reason.message : "The whiteboard snapshot could not be prepared.");
+    }
+  };
+  const finishDrawingTurn = (id: number) => {
+    setDrawingTurn((current) => current?.id === id ? null : current);
   };
   useEffect(() => {
     if (!continueAutomatically || teacherState !== "complete") return;
@@ -919,7 +977,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
             : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} searchQuery={searchQuery} onAskSelection={(text, pageIndex, spanIds) => setSelectionContext({ text, pageIndex, spanIds })} />}
         </Suspense>
       </section>
-      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} documentId={learningDocument.id} currentPage={currentPage} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} onClearSelection={() => setSelectionContext(null)} onCaptionTextChange={setCaptionText} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} onResizeStart={() => {
+      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} documentId={learningDocument.id} currentPage={currentPage} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} onClearSelection={() => setSelectionContext(null)} onCaptionTextChange={setCaptionText} drawingTurn={drawingTurn} onDrawingTurnHandled={finishDrawingTurn} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} onResizeStart={() => {
         resizing.current = true;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
@@ -939,7 +997,9 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
         <button><Icon name="simple" />Simpler</button>
         <button><Icon name="deeper" />Go deeper</button>
         <button onClick={() => setTeacherState("quiz")}><Icon name="question" />Quiz me</button>
+        <button type="button" onClick={() => void askAboutDrawing()} disabled={drawingTurn !== null || appConfig.demoMode || whiteboardDrawing.length === 0} title={whiteboardDrawing.length === 0 ? "Draw on the whiteboard before asking for feedback" : undefined}>Ask Pixie about my drawing</button>
       </div>
+      {drawingContextStatus && <p className="question-source-context" role="status">{drawingContextStatus}</p>}
       <div className="lesson-progress"><div><span>PAGE {currentPage} OF {pageCount}</span><b>{learningDocument.filename}</b></div><div className="progress-track"><i style={{ width: `${(currentPage / pageCount) * 100}%` }}></i><span style={{ left: `${(currentPage / pageCount) * 100}%` }}></span></div><small>{currentPage === pageCount ? "Final page" : `${pageCount - currentPage} pages remaining`}</small></div>
       <div className="lesson-toggles"><button className={boardOpen ? "active" : ""} onClick={() => setBoardOpen(!boardOpen)}><Icon name="board" />Whiteboard</button><div className="caption-toggle-control" onMouseEnter={showCaptionControls} onMouseLeave={hideCaptionControls} onFocus={showCaptionControls}><button className={captionsEnabled ? "active" : ""} onClick={() => setCaptionsEnabled(!captionsEnabled)} aria-pressed={captionsEnabled} aria-label={captionsEnabled ? "Hide captions" : "Show captions"} title={captionsEnabled ? "Hide captions" : "Show captions"}><Icon name="cc" /></button>{captionsEnabled && <div className={`caption-controls ${captionControlsVisible ? "visible" : ""}`} aria-label="Caption appearance controls" onMouseEnter={showCaptionControls}><label>Contrast <input type="range" min="70" max="140" value={captionContrast} onChange={(event) => setCaptionContrast(Number(event.target.value))} /></label><label>Transparency <input type="range" min="0" max="70" value={captionTransparency} onChange={(event) => setCaptionTransparency(Number(event.target.value))} /></label></div>}</div></div>
     </footer>
