@@ -210,7 +210,7 @@ def ask_learning_question(
             raise QuestionProviderUnavailableError
         history = _conversation_history(session, document.id, user.id)
         session.commit()
-        answer = provider.answer(question, source, history)
+        answer = provider.answer(question, source, history, intent=payload.intent)
         citations = _validate_answer(answer, source)
         actions = _validate_actions(answer, source)
         record.answer = answer.answer

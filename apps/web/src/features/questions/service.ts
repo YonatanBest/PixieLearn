@@ -34,9 +34,12 @@ export type LearningQuestionAudioTranscript = {
   transcript: string;
 };
 
+export type TutorIntent = "ask" | "repeat" | "simpler" | "deeper" | "quiz";
+
 export type AskLearningQuestion = {
   question: string;
   pageIndex: number;
+  intent?: TutorIntent;
   selectedText?: string;
   selectedSpanIds?: string[];
 };

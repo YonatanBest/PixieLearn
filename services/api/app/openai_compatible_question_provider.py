@@ -5,13 +5,14 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.question_answer import (
+    INTENT_INSTRUCTIONS,
     QuestionAnswer,
     QuestionAnswerProvider,
     QuestionProviderRequestError,
     QuestionProviderTimeoutError,
 )
 from app.meta_responses_question_provider import create_meta_question_answer_provider
-from app.schemas.questions import QuestionSourceContext
+from app.schemas.questions import QuestionSourceContext, TutorIntent
 
 
 class OpenAICompatibleQuestionProvider:
@@ -33,6 +34,8 @@ class OpenAICompatibleQuestionProvider:
         question: str,
         source: QuestionSourceContext,
         history: list[dict[str, str]],
+        *,
+        intent: TutorIntent = "ask",
     ) -> QuestionAnswer:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -43,7 +46,7 @@ class OpenAICompatibleQuestionProvider:
                 {
                     "role": "system",
                     "content": (
-                        "Answer the learner using only the supplied source context. "
+                        f"{INTENT_INSTRUCTIONS[intent]} Answer the learner using only the supplied source context. "
                         "Return JSON with answer, citations, and actions. Each citation must include "
                         "a verbatim quote and supported span IDs. Actions may be empty; use only "
                         "pdf_highlight with a verbatim source quote or whiteboard_label with a "
@@ -57,6 +60,7 @@ class OpenAICompatibleQuestionProvider:
                     "content": json.dumps(
                         {
                             "question": question,
+                            "intent": intent,
                             "sourceText": source.text,
                             "availableSpanIds": source.span_ids,
                         },

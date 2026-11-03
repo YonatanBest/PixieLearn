@@ -1042,15 +1042,17 @@ class FakeQuestionAnswerProvider:
             citations=[QuestionCitation(quote="uses sunlight", span_ids=["span-1", "span-2"])],
         )
         self.error = error
-        self.calls: list[tuple[str, QuestionSourceContext, list[dict[str, str]]]] = []
+        self.calls: list[tuple[str, QuestionSourceContext, list[dict[str, str]], str]] = []
 
     def answer(
         self,
         question: str,
         source: QuestionSourceContext,
         history: list[dict[str, str]],
+        *,
+        intent: str = "ask",
     ) -> QuestionAnswer:
-        self.calls.append((question, source, history))
+        self.calls.append((question, source, history, intent))
         if self.error:
             raise self.error
         return self.answer_value
@@ -1114,6 +1116,7 @@ def test_learning_question_uses_selected_text_and_persists_followups(document_ap
         json={
             "question": "What does this process use?",
             "pageIndex": 0,
+            "intent": "simpler",
             "selectedText": "uses sunlight",
             "selectedSpanIds": ["span-1", "span-2"],
         },
@@ -1137,6 +1140,7 @@ def test_learning_question_uses_selected_text_and_persists_followups(document_ap
     assert second.json()["sourceContext"]["mode"] == "page"
     assert provider.calls[0][1].text == "uses sunlight"
     assert provider.calls[0][1].span_ids == ["span-1", "span-2"]
+    assert provider.calls[0][3] == "simpler"
     assert provider.calls[1][1].text == "Photosynthesis uses sunlight to make glucose."
     assert json.loads(provider.calls[1][2][0]["content"]) == {
         "question": "What does this process use?",
