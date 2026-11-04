@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiBlobRequest, apiRequest } from "./client";
+import { ApiError, apiAudioRequest, apiBlobRequest, apiRequest } from "./client";
 
 vi.mock("../config", () => ({
   appConfig: { apiBaseUrl: "/api" },
@@ -136,6 +136,40 @@ describe("apiBlobRequest", () => {
       credentials: "include",
       headers: { Accept: "application/pdf, application/json" },
     }));
+  });
+
+  describe("apiAudioRequest", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("loads authenticated WAV audio", async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([82, 73, 70, 70]), {
+        status: 200,
+        headers: { "Content-Type": "audio/wav" },
+      }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(apiAudioRequest("/documents/doc-7/questions/question-2/audio")).resolves.toMatchObject({
+        type: "audio/wav",
+        size: 4,
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/documents/doc-7/questions/question-2/audio",
+        expect.objectContaining({ credentials: "include", headers: { Accept: "audio/wav, application/json" } }),
+      );
+    });
+
+    it("rejects an invalid audio content type", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("not audio", {
+        status: 200,
+        headers: { "Content-Type": "text/plain" },
+      })));
+
+      await expect(apiAudioRequest("/documents/doc-7/questions/question-2/audio")).rejects.toMatchObject({
+        name: "ApiError",
+        status: 502,
+        code: "INVALID_AUDIO_RESPONSE",
+      });
+    });
   });
 
   it("shows the authenticated endpoint error instead of an opaque PDF fetch error", async () => {

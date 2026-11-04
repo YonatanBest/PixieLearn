@@ -39,7 +39,7 @@ export function FloatingTutor({ onOpen, onLessonPaused, captionsEnabled, setCapt
       <div className="browser-top"><i></i><i></i><i></i><span>docs.python.org / tutorial / classes</span></div>
       <div className="browser-body"><nav>Python docs<br/><b>Classes</b><span>9.1 A Word About Names</span><span>9.2 Python Scopes</span><span>9.3 A First Look at Classes</span></nav><article><small>PYTHON TUTORIAL</small><h1>9. Classes</h1><p>Classes provide a means of bundling data and functionality together. Creating a new class creates a new type of object, allowing new instances of that type to be made.</p><pre>{`class Dog:\n    kind = "canine"\n\n    def __init__(self, name):\n        self.name = name`}</pre><div className="screen-highlight"></div><svg className="screen-arrow" viewBox="0 0 140 80"><path d="M5 15c45-3 86 5 116 43"/><path d="m112 52 11 8-2-14"/></svg></article></div>
     </div>
-    {captionsEnabled && <div className={`floating-captions caption-position-${captionPosition === "Center" ? "center" : "bottom"}`}><LiveCaptions transparency={captionTransparency} contrast={captionContrast} textSize={captionTextSize} /></div>}
+    {captionsEnabled && <div className={`floating-captions caption-position-${captionPosition === "Center" ? "center" : "bottom"}`}><LiveCaptions text={explanation} transparency={captionTransparency} contrast={captionContrast} textSize={captionTextSize} /></div>}
     {!minimized && <section className="floating-tutor">
       <header className="floating-chat-header"><button className="floating-minimize" type="button" aria-label="Minimize tutor" title="Minimize tutor" onClick={() => setMinimized(true)}><Icon name="minus" /></button></header>
       <div className="floating-chat-content">

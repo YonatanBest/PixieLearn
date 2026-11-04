@@ -98,6 +98,9 @@ class LearningQuestionRecord(Base):
     citations: Mapped[list[dict]] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
     )
+    actions: Mapped[list[dict]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
+    )
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

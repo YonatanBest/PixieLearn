@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,7 +14,7 @@ class Settings(BaseSettings):
     better_auth_timeout_seconds: float = 5.0
     database_url: str = "postgresql+psycopg://pixielearn:pixielearn@localhost:5432/pixielearn"
     redis_url: str = "redis://localhost:6410/0"
-    object_storage_endpoint_url: str = "http://localhost:9000"
+    object_storage_endpoint_url: str = "http://localhost:9100"
     object_storage_public_endpoint_url: str | None = None
     object_storage_region_name: str = "us-east-1"
     object_storage_bucket: str = "pixielearn-documents"
@@ -31,8 +32,15 @@ class Settings(BaseSettings):
     ai_api_key: str | None = None
     ai_model: str | None = None
     ai_request_timeout_seconds: float = Field(default=30.0, ge=1, le=120)
+    meta_model_api_key: str | None = None
+    meta_model: str = "muse-spark-1.3"
+    gemini_api_key: str | None = None
+    gemini_tts_model: str = "gemini-3.8-flash-tts"
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[1] / ".env",
+        extra="ignore",
+    )
 
 
 @lru_cache

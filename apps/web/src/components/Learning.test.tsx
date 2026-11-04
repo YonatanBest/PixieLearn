@@ -2,8 +2,13 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningDocument } from "../features/documents/service";
-import { askLearningQuestion, getLearningQuestions } from "../features/questions/service";
-import { Workspace } from "./Learning";
+import {
+  askLearningQuestion,
+  getLearningQuestionAudio,
+  getLearningQuestions,
+  transcribeLearningQuestion,
+} from "../features/questions/service";
+import { LiveCaptions, Workspace } from "./Learning";
 
 vi.mock("../lib/config", () => ({
   appConfig: { demoMode: false, showMockExamples: false },
@@ -12,6 +17,8 @@ vi.mock("../lib/config", () => ({
 vi.mock("../features/questions/service", () => ({
   getLearningQuestions: vi.fn(() => Promise.resolve({ questions: [] })),
   askLearningQuestion: vi.fn(),
+  getLearningQuestionAudio: vi.fn(),
+  transcribeLearningQuestion: vi.fn(),
 }));
 
 vi.mock("../features/documents/DocumentTextPreview", () => ({
@@ -34,16 +41,33 @@ vi.mock("../features/documents/MermaidFigure", () => ({
 
 let container: HTMLDivElement;
 let root: Root;
+let mediaDevicesDescriptor: PropertyDescriptor | undefined;
+let createObjectUrlDescriptor: PropertyDescriptor | undefined;
 
 afterEach(() => {
   act(() => root?.unmount());
   container?.remove();
+  vi.unstubAllGlobals();
+  if (mediaDevicesDescriptor) {
+    Object.defineProperty(navigator, "mediaDevices", mediaDevicesDescriptor);
+  } else {
+    Reflect.deleteProperty(navigator, "mediaDevices");
+  }
+  mediaDevicesDescriptor = undefined;
+  if (createObjectUrlDescriptor) {
+    Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+  } else {
+    Reflect.deleteProperty(URL, "createObjectURL");
+  }
+  createObjectUrlDescriptor = undefined;
 });
 
 describe("learning workspace document session", () => {
   beforeEach(() => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     vi.mocked(getLearningQuestions).mockReset().mockResolvedValue({ questions: [] });
+    vi.mocked(transcribeLearningQuestion).mockReset().mockResolvedValue({ transcript: "Why do plants need sunlight?" });
+    vi.mocked(getLearningQuestionAudio).mockReset().mockRejectedValue(new Error("Speech is not configured."));
     vi.mocked(askLearningQuestion).mockReset().mockImplementation(async (_documentId, request) => ({
       id: "question-1",
       question: request.question,
@@ -55,10 +79,165 @@ describe("learning workspace document session", () => {
         spanIds: request.selectedSpanIds ?? [],
       },
       citations: [{ pageIndex: request.pageIndex, quote: request.selectedText ?? "Plants need sunlight", spanIds: request.selectedSpanIds ?? [] }],
+      actions: [],
       status: "complete",
       failureMessage: null,
       createdAt: "2026-10-31T08:00:00Z",
     }));
+  });
+
+  it("shows current narration in a caption overlay outside the scrolling PDF", async () => {
+    class SpeechSynthesisUtteranceMock {
+      onstart: ((event: SpeechSynthesisEvent) => void) | null = null;
+      onend: ((event: SpeechSynthesisEvent) => void) | null = null;
+      onerror: ((event: SpeechSynthesisErrorEvent) => void) | null = null;
+      rate = 1;
+      pitch = 1;
+
+      constructor(readonly text: string) {}
+    }
+    const speak = vi.fn((utterance: SpeechSynthesisUtteranceMock) => {
+      utterance.onstart?.(new Event("start") as SpeechSynthesisEvent);
+    });
+    vi.stubGlobal("SpeechSynthesisUtterance", SpeechSynthesisUtteranceMock);
+    vi.stubGlobal("speechSynthesis", { cancel: vi.fn(), speak });
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<Workspace
+        openFloating={() => undefined}
+        captionsEnabled
+        setCaptionsEnabled={() => undefined}
+        captionTransparency={18}
+        setCaptionTransparency={() => undefined}
+        captionContrast={100}
+        setCaptionContrast={() => undefined}
+        learningDocument={{ id: "document-42", filename: "photosynthesis.pdf", pageCount: 8 }}
+        onWorkspaceChange={() => undefined}
+        onWorkspaceCheckpoint={() => undefined}
+        onOpenDocument={() => undefined}
+      />);
+      await Promise.resolve();
+    });
+
+    const caption = container.querySelector(".live-captions");
+    expect(speak).toHaveBeenCalledOnce();
+    expect(caption?.textContent).toBe("The query and key vectors determine how strongly tokens relate. Dividing by the square root of the key dimension keeps softmax from becoming overly confident.");
+    expect(caption?.closest(".document-stage")).toBeNull();
+    expect(caption?.closest(".workspace-caption-overlay")?.parentElement).toBe(container.querySelector(".workspace"));
+    expect(container.querySelector(".learning-area")?.children).toHaveLength(2);
+  });
+
+  it("renders caption text from the active speaker instead of fixed sample text", async () => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<LiveCaptions text="Plants use sunlight to make sugar." transparency={18} contrast={100} />);
+    });
+
+    expect(container.querySelector(".live-captions")?.textContent).toBe("Plants use sunlight to make sugar.");
+    expect(container.textContent).not.toContain("The scaling term keeps the dot products");
+  });
+
+  it("automatically sends a voice question after silence and listens for another turn", async () => {
+    const track = { stop: vi.fn() };
+    const stream = { getTracks: () => [track] };
+    const source = { connect: vi.fn(), disconnect: vi.fn() };
+    const processor = {
+      onaudioprocess: null as ((event: AudioProcessingEvent) => void) | null,
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+    };
+    const silentOutput = { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() };
+    const audioContext = {
+      sampleRate: 24_000,
+      state: "running",
+      destination: {},
+      resume: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      createMediaStreamSource: vi.fn(() => source),
+      createScriptProcessor: vi.fn(() => processor),
+      createGain: vi.fn(() => silentOutput),
+    };
+    const getUserMedia = vi.fn().mockResolvedValue(stream);
+    mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    vi.stubGlobal("AudioContext", vi.fn(function AudioContextMock() {
+      return audioContext;
+    }));
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<Workspace
+        openFloating={() => undefined}
+        captionsEnabled={false}
+        setCaptionsEnabled={() => undefined}
+        captionTransparency={18}
+        setCaptionTransparency={() => undefined}
+        captionContrast={100}
+        setCaptionContrast={() => undefined}
+        learningDocument={{ id: "document-42", filename: "photosynthesis.pdf", pageCount: 8 }}
+        onWorkspaceChange={() => undefined}
+        onWorkspaceCheckpoint={() => undefined}
+        onOpenDocument={() => undefined}
+      />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Select passage"))?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelectorAll(".ask-form .mute-button")).toHaveLength(1);
+    expect(container.querySelector(".voice-question-controls")).toBeNull();
+    expect(container.querySelector(".voice-question-status")).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>(".ask-form .mute-button")?.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".ask-form .mute-button")?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[aria-label='Mute microphone']")).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>(".ask-form .mute-button")?.getAttribute("aria-pressed")).toBe("false");
+    expect(container.textContent).toContain("Listening · Pixie sends your turn after 1.2 seconds of silence.");
+
+    const emitAudio = (samples: Float32Array) => {
+      const audioEvent = new Event("audioprocess") as AudioProcessingEvent;
+      Object.defineProperty(audioEvent, "inputBuffer", {
+        value: { getChannelData: () => samples },
+      });
+      processor.onaudioprocess?.(audioEvent);
+    };
+    await act(async () => {
+      emitAudio(new Float32Array(4096).fill(0.2));
+      for (let frame = 0; frame < 8; frame += 1) emitAudio(new Float32Array(4096));
+      for (let turn = 0; turn < 10; turn += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const transcriptionMock = vi.mocked(transcribeLearningQuestion);
+    expect(transcriptionMock).toHaveBeenCalledTimes(1);
+    const [transcribedDocumentId, recordedAudio] = transcriptionMock.mock.calls[0];
+    expect(transcribedDocumentId).toBe("document-42");
+    expect(recordedAudio.type).toBe("audio/wav");
+    expect(askLearningQuestion).toHaveBeenCalledWith("document-42", {
+      question: "Why do plants need sunlight?",
+      pageIndex: 0,
+      selectedText: "Plants need sunlight",
+      selectedSpanIds: ["span-1", "span-2"],
+    });
+    expect(container.textContent).toContain("Why do plants need sunlight?");
+    expect(container.textContent).toContain("Listening · Pixie sends your turn after 1.2 seconds of silence.");
+    expect(container.querySelector("[aria-label='Mute microphone']")).not.toBeNull();
+    expect(track.stop).not.toHaveBeenCalled();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[aria-label='Mute microphone']")?.click();
+    });
+    expect(track.stop).toHaveBeenCalledOnce();
   });
 
   it("renders the selected library PDF as the real session document", async () => {
@@ -146,6 +325,26 @@ describe("learning workspace document session", () => {
 
   it("sends a typed question with the selected passage and its source span IDs", async () => {
     const onWorkspaceChange = vi.fn();
+    class AudioMock {
+      onended: (() => void) | null = null;
+      onpause: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      play = vi.fn(async () => undefined);
+      pause = vi.fn(() => this.onpause?.());
+
+      constructor(readonly src: string) {}
+    }
+    const audioInstances: AudioMock[] = [];
+    vi.stubGlobal("Audio", class extends AudioMock {
+      constructor(src: string) {
+        super(src);
+        audioInstances.push(this);
+      }
+    });
+    const createObjectURL = vi.fn(() => "blob:tutor-answer");
+    createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    vi.mocked(getLearningQuestionAudio).mockResolvedValue(new Blob(["tutor audio"], { type: "audio/wav" }));
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -180,11 +379,20 @@ describe("learning workspace document session", () => {
       container.querySelector<HTMLButtonElement>("[aria-label='Send question']")?.click();
       await Promise.resolve();
       await Promise.resolve();
+      await Promise.resolve();
     });
     expect(container.textContent).toContain("YOU · PAGE 1");
     expect(container.textContent).toContain("Why do plants need sunlight?");
+    expect(input.value).toBe("");
+    expect(container.querySelector(".question-exchange > .transcript-user")).not.toBeNull();
+    expect(container.querySelector(".question-exchange > .transcript-assistant")).not.toBeNull();
     expect(container.textContent).toContain("Plants use light to make stored chemical energy.");
     expect(container.textContent).toContain("Page 1: “Plants need sunlight”");
+    expect(container.querySelector(".question-audio-button")).toBeNull();
+    expect(getLearningQuestionAudio).toHaveBeenCalledWith("document-42", "question-1");
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(audioInstances).toHaveLength(1);
+    expect(audioInstances[0].play).toHaveBeenCalledOnce();
     expect(askLearningQuestion).toHaveBeenCalledWith("document-42", {
       question: "Why do plants need sunlight?",
       pageIndex: 0,
@@ -196,6 +404,10 @@ describe("learning workspace document session", () => {
       text: "Plants need sunlight",
       pageIndex: 0,
       spanIds: ["span-1", "span-2"],
+    });
+    await act(async () => {
+      audioInstances[0].onended?.();
+      await Promise.resolve();
     });
   });
 
@@ -271,7 +483,7 @@ describe("learning workspace document session", () => {
     });
 
     expect(container.textContent).toContain("Tutor provider timed out.");
-    expect(input.value).toBe("Why does it need light?");
+    expect(input.value).toBe("");
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry")?.click();
       await Promise.resolve();
