@@ -27,13 +27,20 @@ vi.mock("../features/questions/whiteboardSnapshot", () => ({
 }));
 
 vi.mock("../features/documents/DocumentTextPreview", () => ({
-  default: ({ documentId, pageIndex, zoom, onAskSelection }: {
+  default: ({ documentId, pageIndex, zoom, onAskSelection, tutorHighlightSpanIds = [] }: {
     documentId: string
     pageIndex: number
     zoom: number
     onAskSelection: (text: string, pageIndex: number, spanIds: string[]) => void
+    tutorHighlightSpanIds?: string[]
   }) => (
-    <div data-testid="pdf-session-viewer" data-document-id={documentId} data-page-index={pageIndex} data-zoom={zoom}>
+    <div
+      data-testid="pdf-session-viewer"
+      data-document-id={documentId}
+      data-page-index={pageIndex}
+      data-zoom={zoom}
+      data-tutor-highlight-spans={tutorHighlightSpanIds.join(",")}
+    >
       Rendered PDF page
       <button type="button" onClick={() => onAskSelection("Plants need sunlight", pageIndex, ["span-1", "span-2"])}>Select passage</button>
     </div>
@@ -668,5 +675,200 @@ describe("learning workspace document session", () => {
     });
 
     expect(container.querySelector("[aria-label='Choose a learning document']")).toBeNull();
+  });
+
+  it("applies, dismisses, restores, and undoes tutor PDF and whiteboard actions without overwriting learner drawing", async () => {
+    const drawing = [{
+      points: [{ x: 0.1, y: 0.2 }, { x: 0.8, y: 0.7 }],
+      color: "#6f62d9" as const,
+      width: 3,
+    }];
+    vi.mocked(askLearningQuestion).mockResolvedValueOnce({
+      id: "question-visual-1",
+      question: "What does my drawing show, and how does it relate to this page?",
+      answer: "Your arrow points toward sunlight, which matches the source.",
+      sourceContext: {
+        mode: "page",
+        pageIndex: 0,
+        text: "Photosynthesis uses sunlight to make glucose.",
+        spanIds: ["span-1", "span-2"],
+      },
+      citations: [{ pageIndex: 0, quote: "uses sunlight", spanIds: ["span-1"] }],
+      actions: [
+        { type: "pdf_highlight", pageIndex: 0, quote: "uses sunlight", spanIds: ["span-1"] },
+        { type: "whiteboard_label", text: "make glucose", x: 0.4, y: 0.6 },
+      ],
+      status: "complete",
+      failureMessage: null,
+      createdAt: "2026-10-31T08:00:00Z",
+    });
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<Workspace
+        openFloating={() => undefined}
+        captionsEnabled={false}
+        setCaptionsEnabled={() => undefined}
+        captionTransparency={18}
+        setCaptionTransparency={() => undefined}
+        captionContrast={100}
+        setCaptionContrast={() => undefined}
+        learningDocument={{ id: "document-42", filename: "photosynthesis.pdf", pageCount: 8 }}
+        learningState={{
+          documentId: "document-42",
+          pageIndex: 0,
+          pageCount: 8,
+          zoom: 100,
+          lastOpenedAt: "2026-10-23T10:00:00Z",
+          hasSavedState: true,
+          workspaceState: {
+            teacherState: "teaching",
+            selectionContext: null,
+            transcript: [],
+            whiteboardOpen: true,
+            whiteboardDrawing: drawing,
+            whiteboardDiagrams: [],
+            tutorVisualMarks: [],
+            dismissedTutorActionIds: [],
+            captionsEnabled: false,
+            captionTransparency: 18,
+            captionContrast: 100,
+          },
+        }}
+        onWorkspaceChange={() => undefined}
+        onWorkspaceCheckpoint={() => undefined}
+        onOpenDocument={() => undefined}
+      />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Ask Pixie about my drawing"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Apply PDF highlight")?.click();
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Apply whiteboard note")?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector("[data-testid='pdf-session-viewer']")?.getAttribute("data-tutor-highlight-spans")).toBe("span-1");
+    expect(container.querySelector(".whiteboard-tutor-mark")?.textContent).toContain("make glucose");
+    expect(container.querySelector(".whiteboard-drawing polyline")?.getAttribute("points")).toBe("100,120 800,420");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[aria-label='Undo Pixie\\'s note: make glucose']")?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector(".whiteboard-tutor-mark")).toBeNull();
+    expect(container.querySelector(".whiteboard-drawing polyline")?.getAttribute("points")).toBe("100,120 800,420");
+
+    await act(async () => {
+      [...container.querySelectorAll<HTMLButtonElement>(".question-action-proposal button")].find((button) => button.textContent === "Dismiss")?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Suggestion dismissed.");
+    await act(async () => {
+      [...container.querySelectorAll<HTMLButtonElement>(".question-action-proposal button")].find((button) => button.textContent === "Restore suggestion")?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Apply whiteboard note");
+  });
+
+  it("supports tutor intents, current-board follow-ups, and stopping a slow response without overwriting current state", async () => {
+    let resolveSlowAnswer: ((value: Awaited<ReturnType<typeof askLearningQuestion>>) => void) | undefined;
+    vi.mocked(askLearningQuestion)
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          resolveSlowAnswer = resolve;
+        }),
+      )
+      .mockImplementation(async (_documentId, request) => ({
+        id: `question-${request.intent ?? "ask"}`,
+        question: request.question,
+        answer: `Handled ${request.intent ?? "ask"} turn.`,
+        sourceContext: {
+          mode: request.selectedText ? "selection" : "page",
+          pageIndex: request.pageIndex,
+          text: request.selectedText ?? "Current page text.",
+          spanIds: request.selectedSpanIds ?? [],
+        },
+        citations: [{ pageIndex: request.pageIndex, quote: "Plants need sunlight", spanIds: ["span-1"] }],
+        actions: [],
+        status: "complete",
+        failureMessage: null,
+        createdAt: "2026-10-31T08:00:00Z",
+      }));
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<Workspace
+        openFloating={() => undefined}
+        captionsEnabled={false}
+        setCaptionsEnabled={() => undefined}
+        captionTransparency={18}
+        setCaptionTransparency={() => undefined}
+        captionContrast={100}
+        setCaptionContrast={() => undefined}
+        learningDocument={{ id: "document-42", filename: "photosynthesis.pdf", pageCount: 8 }}
+        onWorkspaceChange={() => undefined}
+        onWorkspaceCheckpoint={() => undefined}
+        onOpenDocument={() => undefined}
+      />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      [...container.querySelectorAll<HTMLButtonElement>(".lesson-actions button")].find((button) => button.textContent?.includes("Simpler"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(askLearningQuestion).toHaveBeenLastCalledWith("document-42", {
+      question: "Can you explain this more simply?",
+      intent: "simpler",
+      pageIndex: 0,
+    });
+    expect(container.textContent).toContain("Thinking about your question…");
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Stop response")?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Question cancelled. Retry whenever you are ready.");
+
+    await act(async () => {
+      resolveSlowAnswer?.({
+        id: "question-stale",
+        question: "Can you explain this more simply?",
+        answer: "Stale answer that should be ignored.",
+        sourceContext: { mode: "page", pageIndex: 0, text: "Current page text.", spanIds: [] },
+        citations: [{ pageIndex: 0, quote: "Plants need sunlight", spanIds: ["span-1"] }],
+        actions: [],
+        status: "complete",
+        failureMessage: null,
+        createdAt: "2026-10-31T08:00:00Z",
+      });
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain("Stale answer that should be ignored.");
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent === "Retry")?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(askLearningQuestion).toHaveBeenLastCalledWith("document-42", {
+      question: "Can you explain this more simply?",
+      intent: "simpler",
+      pageIndex: 0,
+    });
+    expect(container.textContent).toContain("Handled simpler turn.");
   });
 });

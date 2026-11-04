@@ -276,6 +276,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .parsed-text-overlay { position: absolute; inset: 0; overflow: hidden; pointer-events: none; user-select: text; -webkit-user-select: text; }
 .parsed-text-span { position: absolute; display: block; overflow: hidden; color: transparent; -webkit-text-fill-color: transparent; background: transparent; white-space: nowrap; line-height: 1; cursor: text; pointer-events: auto; user-select: text; -webkit-user-select: text; }
 .parsed-text-span-match { color: transparent; -webkit-text-fill-color: transparent; background: rgba(244, 207, 112, .5); outline: 1px solid rgba(244, 207, 112, .8); }
+.parsed-text-span-tutor-highlight { color: transparent; -webkit-text-fill-color: transparent; background: rgba(120, 198, 163, .38); outline: 1px solid rgba(120, 198, 163, .85); border-radius: 2px; }
 .parsed-text-span::selection { color: transparent; -webkit-text-fill-color: transparent; background: rgba(75, 131, 255, .45); }
 .document-selection-action { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; width: min(100%, 780px); margin: 12px auto; color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .page-number-control { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
