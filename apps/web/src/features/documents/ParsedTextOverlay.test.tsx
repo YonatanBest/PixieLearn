@@ -83,4 +83,21 @@ describe("parsed text overlay", () => {
 
     expect(onSelectionChange).toHaveBeenLastCalledWith("Plants", ["p00000-w00000"])
   })
+
+  it("renders applied tutor highlight spans using stored word geometry", async () => {
+    await act(async () =>
+      root.render(
+        <ParsedTextOverlay
+          spans={spans}
+          pagePixelHeight={1000}
+          tutorHighlightSpanIds={["p00000-w00001"]}
+          onSelectionChange={() => undefined}
+        />,
+      ),
+    )
+
+    const words = container.querySelectorAll<HTMLElement>(".parsed-text-span")
+    expect(words[0].classList.contains("parsed-text-span-tutor-highlight")).toBe(false)
+    expect(words[1].classList.contains("parsed-text-span-tutor-highlight")).toBe(true)
+  })
 })
