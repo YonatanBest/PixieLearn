@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, lazy, Suspense, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Icon, IconButton, MuteButton, type IconName } from "./Icon";
 import DocumentLibrary from "../features/documents/DocumentLibrary";
 import type { LearningDocument } from "../features/documents/service";
@@ -12,6 +12,7 @@ import {
   type AskLearningQuestion,
   type LearningQuestion,
   type LearningQuestionAction,
+  type QuestionCitation,
   type TutorIntent,
 } from "../features/questions/service";
 import { createWhiteboardSnapshot } from "../features/questions/whiteboardSnapshot";
@@ -273,48 +274,252 @@ export function Whiteboard({ onClose, drawing, onDrawingChange, diagrams, onDiag
   ;
 }
 
-export function Quiz({ state, setState }: { state: TeacherState; setState: (s: TeacherState) => void }) {
-  const [selected, setSelected] = useState(1);
-  if (state === "feedback") return <div className="quiz-modal-card quiz-content">
-    <div className="quiz-meta"><span>QUESTION 2 OF 5</span><div className="mini-progress"><i></i></div></div>
-    <div className="feedback-icon"><Icon name="hint" size={22} /></div>
-    <h2>Almost there.</h2>
-    <p className="feedback-copy">Not quite. Think about what happens to the magnitude of a dot product as the vector dimension increases.</p>
-    <div className="insight-box"><b>The key idea</b><p>More dimensions create more terms in the sum. Dividing by √d<sub>k</sub> keeps the variance stable, so softmax doesn’t become overly confident.</p></div>
-    <div className="feedback-actions">
-      <button className="primary-button" onClick={() => setState("quiz")}>Try again</button>
-      <button className="secondary-button" onClick={() => setState("teaching")}><Icon name="play" /> Continue lesson</button>
-    </div>
-  </div>;
-  return <div className="quiz-modal-card quiz-content">
-    <div className="quiz-meta"><span>QUESTION 2 OF 5</span><div className="mini-progress"><i></i></div></div>
-    <span className="eyebrow">Check your understanding</span>
-    <h2>Why do we divide the query-key dot product by √d<sub>k</sub>?</h2>
-    <div className="answers">
-      {[
-        "To make the model process fewer tokens",
-        "To keep dot-product magnitudes stable as dimensions grow",
-        "To ensure every token gets equal attention"
-      ].map((answer, index) => <button key={answer} className={`answer ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span>{String.fromCharCode(65 + index)}</span><b>{answer}</b>{selected === index && <Icon name="check" />}</button>)}
-    </div>
-    <button className="primary-button submit" onClick={() => setState("feedback")}>Submit answer</button>
-    <div className="quiz-links"><button><Icon name="hint" /> Give me a hint</button><button onClick={() => setState("teaching")}>Skip question</button></div>
-  </div>;
+export type QuizData = {
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+  citations?: QuestionCitation[];
+  pageIndex?: number;
+};
+
+export function parseQuizFromText(
+  text: string,
+  citations: QuestionCitation[] = [],
+  pageIndex?: number,
+): QuizData | null {
+  if (!text) return null;
+
+  const cleanText = text.replace(/\*\*/g, "").trim();
+
+  const inlineMatch = cleanText.match(
+    /(.*?)\s*A[.)]\s*(.+?)\s*B[.)]\s*(.+?)\s*C[.)]\s*(.+?)(?:\s*D[.)]\s*(.+?))?\s*(?:Correct\s*Answer|Answer|Correct|$)/i,
+  );
+
+  let questionPart = "";
+  let options: string[] = [];
+  let correctLetter = "A";
+
+  if (inlineMatch && inlineMatch[2] && inlineMatch[3]) {
+    questionPart = inlineMatch[1].trim();
+    options = [
+      inlineMatch[2].trim(),
+      inlineMatch[3].trim(),
+      ...(inlineMatch[4] ? [inlineMatch[4].trim()] : []),
+      ...(inlineMatch[5] ? [inlineMatch[5].trim()] : []),
+    ];
+  } else {
+    const lines = cleanText.split("\n");
+    const optionPattern = /^\s*([A-D])[.)]\s*(.+)$/i;
+    const lineOptions: { letter: string; text: string }[] = [];
+
+    for (const line of lines) {
+      const match = optionPattern.exec(line.trim());
+      if (match) {
+        lineOptions.push({
+          letter: match[1].toUpperCase(),
+          text: match[2].trim(),
+        });
+      }
+    }
+
+    if (lineOptions.length >= 2) {
+      const firstOptionLineIndex = lines.findIndex((line) => optionPattern.test(line.trim()));
+      questionPart = firstOptionLineIndex > 0 ? lines.slice(0, firstOptionLineIndex).join(" ").trim() : cleanText;
+      options = lineOptions.map((opt) => opt.text);
+    }
+  }
+
+  if (options.length < 2) return null;
+
+  const correctMatch = cleanText.match(/(?:Correct\s*Answer|Answer|Correct):\s*([A-D])/i);
+  if (correctMatch) {
+    correctLetter = correctMatch[1].toUpperCase();
+  } else {
+    const fallbackMatch = cleanText.match(/Option\s*([A-D])/i);
+    if (fallbackMatch) correctLetter = fallbackMatch[1].toUpperCase();
+  }
+
+  const correctIndex = Math.max(0, correctLetter.charCodeAt(0) - 65);
+  const answerPos = cleanText.search(/(?:Correct\s*Answer|Answer|Correct):/i);
+  const explanation = answerPos > 0 ? cleanText.slice(answerPos).trim() : "";
+
+  return {
+    question: questionPart || "Check your understanding",
+    options,
+    correctIndex: Math.min(options.length - 1, correctIndex),
+    explanation,
+    citations,
+    pageIndex,
+  };
 }
 
-export function QuizModal({ state, setState, onClose }: { state: TeacherState; setState: (s: TeacherState) => void; onClose: () => void }) {
+export function Quiz({
+  state,
+  setState,
+  quizData,
+  onNavigateToPage,
+}: {
+  state: TeacherState;
+  setState: (s: TeacherState) => void;
+  quizData?: QuizData | null;
+  onNavigateToPage?: (pageIndex: number) => void;
+}) {
+  const [selected, setSelected] = useState<number | null>(quizData ? null : 1);
+
+  if (!quizData) {
+    if (appConfig.demoMode) {
+      if (state === "feedback") return <div className="quiz-modal-card quiz-content">
+        <div className="quiz-meta"><span>QUESTION 2 OF 5</span><div className="mini-progress"><i></i></div></div>
+        <div className="feedback-icon"><Icon name="hint" size={22} /></div>
+        <h2>Almost there.</h2>
+        <p className="feedback-copy">Not quite. Think about what happens to the magnitude of a dot product as the vector dimension increases.</p>
+        <div className="insight-box"><b>The key idea</b><p>More dimensions create more terms in the sum. Dividing by √d<sub>k</sub> keeps the variance stable, so softmax doesn’t become overly confident.</p></div>
+        <div className="feedback-actions">
+          <button className="primary-button" onClick={() => setState("quiz")}>Try again</button>
+          <button className="secondary-button" onClick={() => setState("teaching")}><Icon name="play" /> Continue lesson</button>
+        </div>
+      </div>;
+      return <div className="quiz-modal-card quiz-content">
+        <div className="quiz-meta"><span>QUESTION 2 OF 5</span><div className="mini-progress"><i></i></div></div>
+        <span className="eyebrow">Check your understanding</span>
+        <h2>Why do we divide the query-key dot product by √d<sub>k</sub>?</h2>
+        <div className="answers">
+          {[
+            "To make the model process fewer tokens",
+            "To keep dot-product magnitudes stable as dimensions grow",
+            "To ensure every token gets equal attention"
+          ].map((answer, index) => <button key={answer} className={`answer ${selected === index ? "selected" : ""}`} onClick={() => setSelected(index)}><span>{String.fromCharCode(65 + index)}</span><b>{answer}</b>{selected === index && <Icon name="check" />}</button>)}
+        </div>
+        <button className="primary-button submit" onClick={() => setState("feedback")}>Submit answer</button>
+        <div className="quiz-links"><button><Icon name="hint" /> Give me a hint</button><button onClick={() => setState("teaching")}>Skip question</button></div>
+      </div>;
+    }
+    return (
+      <div className="quiz-modal-card quiz-content centered-state" style={{ padding: "40px 24px", textAlign: "center" }}>
+        <span className="eyebrow" style={{ color: "var(--violet)", fontWeight: 700, letterSpacing: ".08em" }}>CREATING QUIZ</span>
+        <h2 style={{ fontSize: "18px", margin: "12px 0 8px" }}>Pixie is creating a check for this page…</h2>
+        <p style={{ color: "var(--muted)", fontSize: "13px" }} role="status">Analyzing page source context and generating options…</p>
+      </div>
+    );
+  }
+
+  const isCorrect = selected === quizData.correctIndex;
+
+  if (state === "feedback") {
+    return (
+      <div className="quiz-modal-card quiz-content">
+        <div className="quiz-meta">
+          <span>{quizData.pageIndex !== undefined ? `PAGE ${quizData.pageIndex + 1}` : "CHECK YOUR UNDERSTANDING"}</span>
+        </div>
+        <div className="feedback-icon">
+          <Icon name={isCorrect ? "check" : "hint"} size={22} />
+        </div>
+        <h2>{isCorrect ? "Correct answer!" : "Not quite."}</h2>
+        <p className="feedback-copy">
+          {isCorrect
+            ? `You selected the correct answer: Option ${String.fromCharCode(65 + quizData.correctIndex)}`
+            : `You selected Option ${selected !== null ? String.fromCharCode(65 + selected) : ""}. The correct answer is Option ${String.fromCharCode(65 + quizData.correctIndex)}: ${quizData.options[quizData.correctIndex]}`}
+        </p>
+        {quizData.explanation && (
+          <div className="insight-box">
+            <b>The key idea</b>
+            <p>{quizData.explanation}</p>
+          </div>
+        )}
+        {quizData.citations && quizData.citations.length > 0 && (
+          <div className="insight-box">
+            <b>Source evidence</b>
+            {quizData.citations.map((citation, index) => (
+              <button
+                key={index}
+                type="button"
+                className="question-citation"
+                style={{ display: "block", marginTop: "6px" }}
+                onClick={() => onNavigateToPage?.(citation.pageIndex)}
+              >
+                Page {citation.pageIndex + 1}: “{citation.quote}”
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="feedback-actions">
+          {!isCorrect && (
+            <button className="primary-button" type="button" onClick={() => setState("quiz")}>
+              Try again
+            </button>
+          )}
+          <button className="secondary-button" type="button" onClick={() => setState("teaching")}>
+            <Icon name="play" /> Continue lesson
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="quiz-modal-card quiz-content">
+      <div className="quiz-meta">
+        <span>{quizData.pageIndex !== undefined ? `PAGE ${quizData.pageIndex + 1}` : "CHECK YOUR UNDERSTANDING"}</span>
+      </div>
+      <span className="eyebrow">Check your understanding</span>
+      <h2>{quizData.question}</h2>
+      <div className="answers">
+        {quizData.options.map((answer, index) => (
+          <button
+            key={index}
+            type="button"
+            className={`answer ${selected === index ? "selected" : ""}`}
+            onClick={() => setSelected(index)}
+          >
+            <span>{String.fromCharCode(65 + index)}</span>
+            <b>{answer}</b>
+            {selected === index && <Icon name="check" />}
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="primary-button submit"
+        disabled={selected === null}
+        onClick={() => setState("feedback")}
+      >
+        Submit answer
+      </button>
+      <div className="quiz-links">
+        <button type="button" onClick={() => setState("teaching")}>
+          Skip question
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function QuizModal({
+  state,
+  setState,
+  onClose,
+  quizData,
+  onNavigateToPage,
+}: {
+  state: TeacherState;
+  setState: (s: TeacherState) => void;
+  onClose: () => void;
+  quizData?: QuizData | null;
+  onNavigateToPage?: (pageIndex: number) => void;
+}) {
   return <div className="quiz-backdrop" onMouseDown={onClose}>
     <section className="quiz-modal" role="dialog" aria-modal="true" aria-label="Lesson quiz" onMouseDown={(event) => event.stopPropagation()}>
       <header className="quiz-modal-header">
-        <div><span className="live-dot"></span><b>Quick check</b><small>Scaled Dot-Product Attention</small></div>
+        <div><span className="live-dot"></span><b>Quick check</b><small>{quizData?.pageIndex !== undefined ? `Page ${quizData.pageIndex + 1}` : "Scaled Dot-Product Attention"}</small></div>
         <IconButton icon="close" label="Close quiz" onClick={onClose} className="window-close" />
       </header>
-      <Quiz state={state} setState={setState} />
+      <Quiz state={state} setState={setState} quizData={quizData} onNavigateToPage={onNavigateToPage} />
     </section>
   </div>;
 }
 
-export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, documentId, currentPage, onNavigateToPage, onClearSelection, onCaptionTextChange, drawingTurn, onDrawingTurnHandled, appliedTutorActionIds, dismissedTutorActionIds, onApplyTutorAction, onDismissTutorAction, onRestoreTutorAction, onUndoTutorAction, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate" }: {
+export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, documentId, currentPage, onNavigateToPage, onClearSelection, onCaptionTextChange, drawingTurn, onDrawingTurnHandled, appliedTutorActionIds, dismissedTutorActionIds, onApplyTutorAction, onDismissTutorAction, onRestoreTutorAction, onUndoTutorAction, onActiveQuizChange, onRegisterIntentHandler, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate" }: {
   state: TeacherState
   setState: (s: TeacherState) => void
   onResizeStart: () => void
@@ -333,6 +538,8 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
   onDismissTutorAction: (actionId: string) => void
   onRestoreTutorAction: (actionId: string) => void
   onUndoTutorAction: (actionId: string) => void
+  onActiveQuizChange?: (quiz: QuizData | null) => void
+  onRegisterIntentHandler?: (handler: (intent: TutorIntent, question: string) => void) => void
   autoPlayExplanations?: boolean
   speakingSpeed?: "0.8x" | "1.0x" | "1.2x" | "1.5x"
   voice?: "Pixie · Calm" | "Pixie · Bright"
@@ -500,6 +707,7 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
     spokenText = questions.find((item) => item.id === questionId)?.answer ?? "",
   ): Promise<void> {
     setSpeechError("");
+    if (!spokenText.trim()) return;
     try {
       clearAnswerAudio();
       const audioBlob = await getLearningQuestionAudio(documentId, questionId);
@@ -515,13 +723,18 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
         audio.onerror = () => reject(new Error("Tutor audio could not be played. Try again."));
         void audio.play().catch(reject);
       });
-    } catch (reason) {
-      if (!resumeCapture || voiceCapture.current === resumeCapture) {
-        setSpeechError(reason instanceof Error ? reason.message : "Tutor audio could not be played. Try again.");
-      }
+    } catch {
+      if (!("speechSynthesis" in window) || !spokenText.trim()) return;
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(spokenText);
+      utterance.onstart = () => onCaptionTextChange(spokenText);
+      utterance.onend = () => onCaptionTextChange("");
+      utterance.onerror = () => onCaptionTextChange("");
+      utterance.rate = Number(speakingSpeed.slice(0, -1));
+      utterance.pitch = voice === "Pixie · Bright" ? 1.15 : 0.9;
+      window.speechSynthesis.speak(utterance);
     } finally {
       if (answerAudio.current) clearAnswerAudio();
-      else onCaptionTextChange("");
     }
   }
 
@@ -553,7 +766,7 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
     if (!("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     onCaptionTextChange("");
-    if (!autoPlayExplanations || state !== "teaching") return;
+    if (!appConfig.demoMode || !autoPlayExplanations || state !== "teaching") return;
     const text = getTeachingExplanation(learningLevel);
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.onstart = () => onCaptionTextChange(text);
@@ -599,7 +812,9 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
       ? current.map((item) => item.id === replaceId ? pendingQuestion : item)
       : [...current, pendingQuestion]);
     setQuestionLoading(true);
-    setState("question");
+    if (source.intent !== "quiz") {
+      setState("question");
+    }
     try {
       const saved = await askLearningQuestion(documentId, source);
       if (activeQuestionRequestId.current !== requestId) return null;
@@ -607,7 +822,24 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
       setQuestions((current) => current.map((item) => item.id === localId
         ? { ...saved, visualContextSent: Boolean(source.whiteboardImage) }
         : item));
-      if (autoPlayAnswer && saved.status === "complete") {
+      const reqIntent = source.intent;
+      const quizAction = saved.actions.find((a) => a.type === "quiz") as Extract<LearningQuestionAction, { type: "quiz" }> | undefined;
+      const parsedQuiz = quizAction ? {
+        question: quizAction.question,
+        options: quizAction.options,
+        correctIndex: quizAction.correctIndex,
+        explanation: quizAction.explanation,
+        citations: saved.citations,
+        pageIndex: saved.sourceContext.pageIndex,
+      } : (saved.answer ? parseQuizFromText(saved.answer, saved.citations, saved.sourceContext.pageIndex) : null);
+      const isQuiz = reqIntent === "quiz" || Boolean(parsedQuiz);
+      if (isQuiz && parsedQuiz) {
+        onActiveQuizChange?.(parsedQuiz);
+        setState("quiz");
+      } else if (reqIntent === "quiz") {
+        setState("teaching");
+      }
+      if (!isQuiz && autoPlayAnswer && saved.status === "complete") {
         void playAnswer(saved.id, undefined, saved.answer ?? "");
       }
       return saved;
@@ -631,6 +863,33 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
       ? { ...item, status: "failed", failureMessage: "Question cancelled. Retry whenever you are ready." }
       : item));
   };
+  const requestIntent = useCallback((intent: TutorIntent, question: string) => {
+    if (appConfig.demoMode) {
+      if (intent === "quiz") setState("quiz");
+      return;
+    }
+    const source: AskLearningQuestion = {
+      question,
+      intent,
+      pageIndex: selectionContext?.pageIndex ?? currentPage - 1,
+      ...(selectionContext
+        ? {
+          selectedText: selectionContext.text,
+          selectedSpanIds: selectionContext.spanIds,
+        }
+        : {}),
+    };
+    if (intent === "quiz") {
+      onActiveQuizChange?.(null);
+      setState("quiz");
+    }
+    void sendQuestion(question, source);
+  }, [selectionContext, currentPage, onActiveQuizChange, setState]);
+
+  useEffect(() => {
+    onRegisterIntentHandler?.(requestIntent);
+  }, [onRegisterIntentHandler, requestIntent]);
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const question = input.trim();
@@ -688,7 +947,13 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
             ))}
           </div>
         )}
-        {questions.map((item) => (
+        {questions.filter((item) => {
+          const intent = questionRequestSources.current.get(item.id)?.intent;
+          if (intent === "quiz") return false;
+          if (item.question.toLowerCase().includes("quiz")) return false;
+          if (item.answer && Boolean(parseQuizFromText(item.answer))) return false;
+          return true;
+        }).map((item) => (
           <div className="question-exchange" key={item.id}>
             <div className="transcript-message transcript-user">
               <small>YOU · PAGE {item.sourceContext.pageIndex + 1}</small>
@@ -735,12 +1000,19 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
         {speechError && <p className="question-error" role="alert">{speechError}</p>}
         {historyLoading && <p className="question-history-status" role="status">Loading saved questions…</p>}
         {!historyLoading && questions.length === 0 && !transcript.length && (
-          <>
-            <div className="speaking-label"><span className="audio-bars"><i></i><i></i><i></i><i></i></span>EXPLAINING HIGHLIGHTED PASSAGE</div>
-            <h2>Let’s break down this equation.</h2>
-            <p>The query and key vectors determine how strongly two tokens relate to each other. Think of the query as what we’re looking for, and each key as a label describing what a token contains.</p>
-            <p>The scaling term <span className="inline-math">√d<sub>k</sub></span> keeps the dot products in a useful range. Without it, softmax can become overly confident as the vectors get larger.</p>
-          </>
+          appConfig.demoMode ? (
+            <>
+              <div className="speaking-label"><span className="audio-bars"><i></i><i></i><i></i><i></i></span>EXPLAINING HIGHLIGHTED PASSAGE</div>
+              <h2>Let’s break down this equation.</h2>
+              <p>The query and key vectors determine how strongly two tokens relate to each other. Think of the query as what we’re looking for, and each key as a label describing what a token contains.</p>
+              <p>The scaling term <span className="inline-math">√d<sub>k</sub></span> keeps the dot products in a useful range. Without it, softmax can become overly confident as the vectors get larger.</p>
+            </>
+          ) : (
+            <div className="empty-teacher-panel" role="status">
+              <h2>Ask Pixie a question</h2>
+              <p>Select a passage in your document or type a question below to start learning with source-grounded explanations.</p>
+            </div>
+          )
         )}
       </div>}
     <div className="teacher-input-area">
@@ -781,6 +1053,8 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   const [tutorVisualMarks, setTutorVisualMarks] = useState<TutorVisualMark[]>([]);
   const [dismissedTutorActionIds, setDismissedTutorActionIds] = useState<string[]>([]);
   const [drawingTurn, setDrawingTurn] = useState<DrawingQuestionRequest | null>(null);
+  const [activeQuiz, setActiveQuiz] = useState<QuizData | null>(null);
+  const intentHandlerRef = useRef<((intent: TutorIntent, question: string) => void) | null>(null);
   const [drawingContextStatus, setDrawingContextStatus] = useState("");
   const drawingTurnId = useRef(0);
   const defaultZoom = defaultDocumentZoom === "100%" ? 100 : defaultDocumentZoom === "120%" ? 120 : 84;
@@ -861,20 +1135,11 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     }
   };
   const requestTutorIntent = (intent: TutorIntent, question: string) => {
-    if (appConfig.demoMode) {
-      if (intent === "quiz") setTeacherState("quiz");
-      return;
+    if (intentHandlerRef.current) {
+      intentHandlerRef.current(intent, question);
+    } else if (appConfig.demoMode && intent === "quiz") {
+      setTeacherState("quiz");
     }
-    if (drawingTurn) return;
-    setDrawingTurn({
-      id: ++drawingTurnId.current,
-      question,
-      intent,
-      pageIndex: selectionContext?.pageIndex ?? currentPage - 1,
-      ...(selectionContext
-        ? { selectedText: selectionContext.text, selectedSpanIds: selectionContext.spanIds }
-        : {}),
-    });
   };
   const askAboutDrawing = async () => {
     if (appConfig.demoMode || drawingTurn) return;
@@ -1095,7 +1360,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
             : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} searchQuery={searchQuery} tutorHighlightSpanIds={tutorVisualMarks.flatMap((mark) => mark.type === "pdf_highlight" && mark.pageIndex === currentPage - 1 ? mark.spanIds : [])} onAskSelection={(text, pageIndex, spanIds) => setSelectionContext({ text, pageIndex, spanIds })} />}
         </Suspense>
       </section>
-      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} documentId={learningDocument.id} currentPage={currentPage} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} onClearSelection={() => setSelectionContext(null)} onCaptionTextChange={setCaptionText} drawingTurn={drawingTurn} onDrawingTurnHandled={finishDrawingTurn} appliedTutorActionIds={tutorVisualMarks.map((mark) => mark.id)} dismissedTutorActionIds={dismissedTutorActionIds} onApplyTutorAction={applyTutorAction} onDismissTutorAction={dismissTutorAction} onRestoreTutorAction={restoreTutorAction} onUndoTutorAction={undoTutorAction} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} onResizeStart={() => {
+      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} documentId={learningDocument.id} currentPage={currentPage} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} onClearSelection={() => setSelectionContext(null)} onCaptionTextChange={setCaptionText} drawingTurn={drawingTurn} onDrawingTurnHandled={finishDrawingTurn} appliedTutorActionIds={tutorVisualMarks.map((mark) => mark.id)} dismissedTutorActionIds={dismissedTutorActionIds} onApplyTutorAction={applyTutorAction} onDismissTutorAction={dismissTutorAction} onRestoreTutorAction={restoreTutorAction} onUndoTutorAction={undoTutorAction} onActiveQuizChange={setActiveQuiz} onRegisterIntentHandler={(handler) => { intentHandlerRef.current = handler; }} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} onResizeStart={() => {
         resizing.current = true;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
@@ -1121,7 +1386,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
       <div className="lesson-progress"><div><span>PAGE {currentPage} OF {pageCount}</span><b>{learningDocument.filename}</b></div><div className="progress-track"><i style={{ width: `${(currentPage / pageCount) * 100}%` }}></i><span style={{ left: `${(currentPage / pageCount) * 100}%` }}></span></div><small>{currentPage === pageCount ? "Final page" : `${pageCount - currentPage} pages remaining`}</small></div>
       <div className="lesson-toggles"><button className={boardOpen ? "active" : ""} onClick={() => setBoardOpen(!boardOpen)}><Icon name="board" />Whiteboard</button><div className="caption-toggle-control" onMouseEnter={showCaptionControls} onMouseLeave={hideCaptionControls} onFocus={showCaptionControls}><button className={captionsEnabled ? "active" : ""} onClick={() => setCaptionsEnabled(!captionsEnabled)} aria-pressed={captionsEnabled} aria-label={captionsEnabled ? "Hide captions" : "Show captions"} title={captionsEnabled ? "Hide captions" : "Show captions"}><Icon name="cc" /></button>{captionsEnabled && <div className={`caption-controls ${captionControlsVisible ? "visible" : ""}`} aria-label="Caption appearance controls" onMouseEnter={showCaptionControls}><label>Contrast <input type="range" min="70" max="140" value={captionContrast} onChange={(event) => setCaptionContrast(Number(event.target.value))} /></label><label>Transparency <input type="range" min="0" max="70" value={captionTransparency} onChange={(event) => setCaptionTransparency(Number(event.target.value))} /></label></div>}</div></div>
     </footer>
-    {(teacherState === "quiz" || teacherState === "feedback") && <QuizModal state={teacherState} setState={changeTeacherState} onClose={() => changeTeacherState("teaching")} />}
+    {(teacherState === "quiz" || teacherState === "feedback") && <QuizModal state={teacherState} setState={changeTeacherState} onClose={() => { changeTeacherState("teaching"); setActiveQuiz(null); }} quizData={activeQuiz} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} />}
   </main>;
 }
 

@@ -79,7 +79,8 @@ class GeminiQuestionProvider:
             "the source from uncertainty, and ask for clarification when ambiguous; do not treat "
             "learner marks as verified source evidence. "
             "Return JSON matching: answer (string), citations (list of objects with quote and spanIds), "
-            "and actions (list of objects with type pdf_highlight or whiteboard_label, or []). "
+            "and actions (list of objects with type pdf_highlight, whiteboard_label, or quiz, or []). "
+            "For a quiz action, provide question, options (list of strings), correctIndex (integer), and explanation. "
             "Do not invent unrequested action types."
         )
 

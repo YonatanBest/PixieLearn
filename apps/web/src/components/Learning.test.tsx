@@ -9,6 +9,7 @@ import {
   transcribeLearningQuestion,
 } from "../features/questions/service";
 import { createWhiteboardSnapshot } from "../features/questions/whiteboardSnapshot";
+import { appConfig } from "../lib/config";
 import { LiveCaptions, Workspace } from "./Learning";
 
 vi.mock("../lib/config", () => ({
@@ -114,6 +115,7 @@ describe("learning workspace document session", () => {
     vi.stubGlobal("SpeechSynthesisUtterance", SpeechSynthesisUtteranceMock);
     vi.stubGlobal("speechSynthesis", { cancel: vi.fn(), speak });
 
+    (appConfig as { demoMode: boolean }).demoMode = true;
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -140,6 +142,36 @@ describe("learning workspace document session", () => {
     expect(caption?.closest(".document-stage")).toBeNull();
     expect(caption?.closest(".workspace-caption-overlay")?.parentElement).toBe(container.querySelector(".workspace"));
     expect(container.querySelector(".learning-area")?.children).toHaveLength(2);
+  });
+
+  it("does not speak static demo text on document open when demo mode is disabled", async () => {
+    const speak = vi.fn();
+    vi.stubGlobal("SpeechSynthesisUtterance", vi.fn());
+    vi.stubGlobal("speechSynthesis", { cancel: vi.fn(), speak });
+    (appConfig as { demoMode: boolean }).demoMode = false;
+
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<Workspace
+        openFloating={() => undefined}
+        captionsEnabled
+        setCaptionsEnabled={() => undefined}
+        captionTransparency={18}
+        setCaptionTransparency={() => undefined}
+        captionContrast={100}
+        setCaptionContrast={() => undefined}
+        learningDocument={{ id: "document-42", filename: "photosynthesis.pdf", pageCount: 8 }}
+        onWorkspaceChange={() => undefined}
+        onWorkspaceCheckpoint={() => undefined}
+        onOpenDocument={() => undefined}
+      />);
+      await Promise.resolve();
+    });
+
+    expect(speak).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Ask Pixie a question");
   });
 
   it("renders caption text from the active speaker instead of fixed sample text", async () => {

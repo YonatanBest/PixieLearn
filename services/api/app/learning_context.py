@@ -45,7 +45,7 @@ def resolve_learning_context(
             mode="page",
             page_index=page_index,
             text=page_text[:MAX_PAGE_CONTEXT_CHARS],
-            span_ids=[span["id"] for span in page.spans[:500]],
+            span_ids=[span["id"] for span in page.spans[:2000]],
         )
 
     selection = selected_text.strip()
