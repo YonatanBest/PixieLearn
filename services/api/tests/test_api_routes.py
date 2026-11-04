@@ -1329,7 +1329,7 @@ def test_learning_question_persists_source_verified_action_proposals(document_ap
             answer="Photosynthesis uses sunlight.",
             citations=[QuestionCitation(quote="uses sunlight", span_ids=["span-1", "span-2"])],
             actions=[
-                {"type": "pdf_highlight", "quote": "uses sunlight"},
+                {"type": "pdf_highlight", "quote": "uses sunlight", "spanIds": ["span-1"]},
                 {"type": "whiteboard_label", "text": "make glucose", "x": 0.4, "y": 0.6},
             ],
         )
@@ -1343,7 +1343,7 @@ def test_learning_question_persists_source_verified_action_proposals(document_ap
 
     assert response.status_code == 201
     assert response.json()["actions"] == [
-        {"type": "pdf_highlight", "pageIndex": 0, "quote": "uses sunlight"},
+        {"type": "pdf_highlight", "pageIndex": 0, "quote": "uses sunlight", "spanIds": ["span-1"]},
         {"type": "whiteboard_label", "text": "make glucose", "x": 0.4, "y": 0.6},
     ]
 
@@ -1351,8 +1351,9 @@ def test_learning_question_persists_source_verified_action_proposals(document_ap
 @pytest.mark.parametrize(
     "action",
     [
-        {"type": "pdf_highlight", "quote": "not in the source"},
-        {"type": "pdf_highlight", "quote": "   "},
+        {"type": "pdf_highlight", "quote": "not in the source", "spanIds": ["span-1"]},
+        {"type": "pdf_highlight", "quote": "   ", "spanIds": ["span-1"]},
+        {"type": "pdf_highlight", "quote": "uses sunlight", "spanIds": ["invalid-span-id"]},
         {"type": "whiteboard_label", "text": "invented label", "x": 0.5, "y": 0.5},
     ],
 )

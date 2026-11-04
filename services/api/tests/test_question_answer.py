@@ -121,7 +121,7 @@ def test_meta_provider_parses_json_output_and_preserves_source_context(monkeypat
                     {
                         "answer": "Photosynthesis uses sunlight.",
                         "citations": [{"quote": "uses sunlight", "spanIds": ["span-1"]}],
-                        "actions": [{"type": "pdf_highlight", "quote": "uses sunlight"}],
+                        "actions": [{"type": "pdf_highlight", "quote": "uses sunlight", "spanIds": ["span-1"]}],
                     }
                 )
             }
@@ -218,7 +218,7 @@ def test_openai_compatible_provider_sends_board_image_as_an_image_url(monkeypatc
 
     content = request_data["messages"][-1]["content"]
     assert content[1] == {"type": "image_url", "image_url": {"url": image}}
-    assert "not as verified source evidence" in request_data["messages"][0]["content"]
+    assert "do not treat them as verified source evidence" in request_data["messages"][0]["content"]
 
 
 def test_learning_question_rejects_whiteboard_images_over_one_mib() -> None:
