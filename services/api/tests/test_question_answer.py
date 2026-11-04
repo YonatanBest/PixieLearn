@@ -145,6 +145,8 @@ def test_meta_provider_parses_json_output_and_preserves_source_context(monkeypat
     assert request_data["url"] == "https://api.meta.ai/v1/responses"
     assert request_data["headers"]["Authorization"].startswith("Bearer ")
     assert request_data["payload"]["model"] == "muse-spark-1.3"
+    assert request_data["payload"]["reasoning"] == {"effort": "low"}
+    assert request_data["payload"]["max_output_tokens"] == 4_096
     assert request_data["payload"]["input"][-1]["content"][0]["type"] == "input_text"
     assert json.loads(request_data["payload"]["input"][-1]["content"][0]["text"]) == {
         "question": "What does this use?",
@@ -334,3 +336,16 @@ def test_meta_provider_rejects_malformed_model_output(monkeypatch) -> None:
     )
     with pytest.raises(QuestionProviderRequestError):
         provider.answer("Question", QuestionSourceContext(mode="page", page_index=0, text="Source text."), [])
+
+
+def test_create_question_answer_provider_prefers_meta_over_gemini() -> None:
+    from app.config import Settings
+    from app.openai_compatible_question_provider import create_question_answer_provider
+
+    settings = Settings(
+        meta_model_api_key="meta-secret",
+        gemini_api_key="gemini-secret",
+    )
+    provider = create_question_answer_provider(settings)
+    assert isinstance(provider, MetaResponsesQuestionProvider)
+

@@ -752,7 +752,15 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
     setQuestionHistoryError("");
     getLearningQuestions(documentId)
       .then(({ questions: savedQuestions }) => {
-        if (active) setQuestions(savedQuestions);
+        if (!active) return;
+        setQuestions((current) => {
+          const pendingLocal = current.filter((item) => item.id.startsWith("pending-"));
+          if (pendingLocal.length === 0) return savedQuestions;
+          const filteredSaved = savedQuestions.filter(
+            (saved) => !(saved.status === "pending" && pendingLocal.some((local) => local.question === saved.question)),
+          );
+          return [...filteredSaved, ...pendingLocal];
+        });
       })
       .catch((reason: unknown) => {
         if (active) setQuestionHistoryError(reason instanceof Error ? reason.message : "Tutor history could not be loaded.");
@@ -819,9 +827,14 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
       const saved = await askLearningQuestion(documentId, source);
       if (activeQuestionRequestId.current !== requestId) return null;
       questionRequestSources.current.set(saved.id, source);
-      setQuestions((current) => current.map((item) => item.id === localId
-        ? { ...saved, visualContextSent: Boolean(source.whiteboardImage) }
-        : item));
+      const completedQuestion = { ...saved, visualContextSent: Boolean(source.whiteboardImage) };
+      setQuestions((current) => {
+        const hasMatch = current.some((item) => item.id === localId || item.id === saved.id);
+        if (!hasMatch) return [...current, completedQuestion];
+        return current
+          .filter((item) => !(item.id === saved.id && localId !== saved.id))
+          .map((item) => (item.id === localId || item.id === saved.id ? completedQuestion : item));
+      });
       const reqIntent = source.intent;
       const quizAction = saved.actions.find((a) => a.type === "quiz") as Extract<LearningQuestionAction, { type: "quiz" }> | undefined;
       const parsedQuiz = quizAction ? {
@@ -849,6 +862,9 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
       setQuestions((current) => current.map((item) => item.id === localId
         ? { ...item, status: "failed", failureMessage: message }
         : item));
+      if (source.intent === "quiz") {
+        setState("teaching");
+      }
       return null;
     } finally {
       if (activeQuestionRequestId.current === requestId) {
@@ -948,9 +964,10 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
           </div>
         )}
         {questions.filter((item) => {
+          if (item.status === "failed") return true;
           const intent = questionRequestSources.current.get(item.id)?.intent;
           if (intent === "quiz") return false;
-          if (item.question.toLowerCase().includes("quiz")) return false;
+          if (item.actions.some((action) => action.type === "quiz")) return false;
           if (item.answer && Boolean(parseQuizFromText(item.answer))) return false;
           return true;
         }).map((item) => (
@@ -978,6 +995,7 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
                 </button>
               ))}
               {item.status === "complete" && item.actions.map((action, index) => {
+                if (action.type === "quiz") return null;
                 const actionId = `${item.id}-${index}`;
                 const description = action.type === "pdf_highlight"
                   ? `PDF highlight · Page ${action.pageIndex + 1}: “${action.quote}”`
@@ -1172,6 +1190,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     actionIndex: number,
     action: LearningQuestionAction,
   ) => {
+    if (action.type === "quiz") return;
     const id = `${questionId}-${actionIndex}`;
     setTutorVisualMarks((current) => current.some((mark) => mark.id === id)
       ? current
@@ -1248,7 +1267,12 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     setCurrentPage(saved && rememberLastPage ? saved.pageIndex + 1 : 1);
     setZoom(saved?.zoom ?? defaultZoom);
     const workspace = saved?.workspaceState;
-    setTeacherState(workspace?.teacherState ?? "teaching");
+    const restoredTeacherState =
+      !appConfig.demoMode && (workspace?.teacherState === "quiz" || workspace?.teacherState === "feedback")
+        ? "teaching"
+        : (workspace?.teacherState ?? "teaching");
+    setActiveQuiz(null);
+    setTeacherState(restoredTeacherState);
     setSelectionContext(workspace?.selectionContext ?? null);
     setTranscript(workspace?.transcript ?? []);
     setBoardOpen(workspace?.whiteboardOpen ?? false);
@@ -1270,6 +1294,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
       zoom: saved?.zoom ?? defaultZoom,
       workspaceState: {
         ...(workspace ?? initialWorkspaceState),
+        teacherState: restoredTeacherState,
         whiteboardDiagrams: workspace?.whiteboardDiagrams?.length
           ? workspace.whiteboardDiagrams
           : saved?.hasSavedState

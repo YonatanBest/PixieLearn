@@ -13,7 +13,11 @@ MAX_PAGE_CONTEXT_CHARS = 12_000
 
 
 def normalize_source_text(text: str) -> str:
-    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", text)).strip().casefold()
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = re.sub(r"[\u2018\u2019\u201a\u201b]", "'", normalized)
+    normalized = re.sub(r"[\u201c\u201d\u201e\u201f]", '"', normalized)
+    normalized = re.sub(r"[\u2010-\u2015\u2212]", "-", normalized)
+    return re.sub(r"\s+", " ", normalized).strip().casefold()
 
 
 def resolve_learning_context(
@@ -45,7 +49,7 @@ def resolve_learning_context(
             mode="page",
             page_index=page_index,
             text=page_text[:MAX_PAGE_CONTEXT_CHARS],
-            span_ids=[span["id"] for span in page.spans[:2000]],
+            span_ids=[span["id"] for span in page.spans[:500]],
         )
 
     selection = selected_text.strip()
