@@ -605,6 +605,8 @@ describe("learning workspace document session", () => {
               source: "flowchart LR\n A --> B",
               createdBy: "assistant",
             }],
+            tutorVisualMarks: [],
+            dismissedTutorActionIds: [],
             captionsEnabled: false,
             captionTransparency: 18,
             captionContrast: 100,

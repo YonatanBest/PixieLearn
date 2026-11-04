@@ -20,8 +20,10 @@ import type {
   TranscriptMessage,
   SelectionContext,
   WhiteboardStroke,
+  TutorVisualMark,
   WorkspaceState,
 } from "../features/documents/learningProgress";
+import type { LearningQuestionAction } from "../features/questions/service";
 import { createInitialWorkspaceState } from "../features/documents/learningProgress";
 
 const DocumentTextPreview = lazy(() => import("../features/documents/DocumentTextPreview"));
@@ -103,12 +105,15 @@ export function DocumentPage({ page, searchQuery }: { page: number; searchQuery:
   </div>;
 }
 
-export function Whiteboard({ onClose, drawing, onDrawingChange, diagrams, onDiagramsChange }: {
+export function Whiteboard({ onClose, drawing, onDrawingChange, diagrams, onDiagramsChange, tutorMarks, onRemoveTutorMark, onNavigateToPage }: {
   onClose: () => void
   drawing: WhiteboardStroke[]
   onDrawingChange: (drawing: WhiteboardStroke[]) => void
   diagrams: WhiteboardDiagram[]
   onDiagramsChange: (diagrams: WhiteboardDiagram[]) => void
+  tutorMarks: TutorVisualMark[]
+  onRemoveTutorMark: (id: string) => void
+  onNavigateToPage: (pageIndex: number) => void
 }) {
   const [drawingEnabled, setDrawingEnabled] = useState(false);
   const [drawingNotice, setDrawingNotice] = useState("");
@@ -245,6 +250,19 @@ export function Whiteboard({ onClose, drawing, onDrawingChange, diagrams, onDiag
           />
         ))}
       </svg>
+      <div className="whiteboard-tutor-marks" aria-label="Pixie's applied whiteboard notes">
+        {tutorMarks.filter((mark) => mark.type === "whiteboard_label").map((mark) => (
+          <div
+            className="whiteboard-tutor-mark"
+            key={mark.id}
+            style={{ left: `${mark.x * 100}%`, top: `${mark.y * 100}%` }}
+          >
+            <span>{mark.text}</span>
+            <button type="button" onClick={() => onNavigateToPage(mark.pageIndex)}>Page {mark.pageIndex + 1}</button>
+            <button type="button" aria-label={`Undo Pixie's note: ${mark.text}`} onClick={() => onRemoveTutorMark(mark.id)}>Undo</button>
+          </div>
+        ))}
+      </div>
         <div className="board-legend"><span><i className="violet-dot"></i>Saved figures</span><span><i className="green-dot"></i>Learner drawing</span><small>Tip: drag to draw when drawing is enabled</small></div>
       </div>
     </section>
@@ -293,7 +311,7 @@ export function QuizModal({ state, setState, onClose }: { state: TeacherState; s
   </div>;
 }
 
-export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, documentId, currentPage, onNavigateToPage, onClearSelection, onCaptionTextChange, drawingTurn, onDrawingTurnHandled, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate" }: {
+export function TeacherPanel({ state, setState, onResizeStart, selectionContext, transcript, documentId, currentPage, onNavigateToPage, onClearSelection, onCaptionTextChange, drawingTurn, onDrawingTurnHandled, appliedTutorActionIds, dismissedTutorActionIds, onApplyTutorAction, onDismissTutorAction, onRestoreTutorAction, onUndoTutorAction, autoPlayExplanations = true, speakingSpeed = "1.0x", voice = "Pixie · Calm", learningLevel = "Intermediate" }: {
   state: TeacherState
   setState: (s: TeacherState) => void
   onResizeStart: () => void
@@ -306,6 +324,12 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
   onCaptionTextChange: (text: string) => void
   drawingTurn: DrawingQuestionRequest | null
   onDrawingTurnHandled: (id: number) => void
+  appliedTutorActionIds: string[]
+  dismissedTutorActionIds: string[]
+  onApplyTutorAction: (questionId: string, pageIndex: number, actionIndex: number, action: LearningQuestionAction) => void
+  onDismissTutorAction: (actionId: string) => void
+  onRestoreTutorAction: (actionId: string) => void
+  onUndoTutorAction: (actionId: string) => void
   autoPlayExplanations?: boolean
   speakingSpeed?: "0.8x" | "1.0x" | "1.2x" | "1.5x"
   voice?: "Pixie · Calm" | "Pixie · Bright"
@@ -666,13 +690,23 @@ export function TeacherPanel({ state, setState, onResizeStart, selectionContext,
                   Page {citation.pageIndex + 1}: “{citation.quote}”
                 </button>
               ))}
-              {item.status === "complete" && item.actions.map((action, index) => action.type === "pdf_highlight"
-                ? <button className="question-action-proposal" key={`${action.type}-${index}`} onClick={() => onNavigateToPage(action.pageIndex)}>
-                  PDF highlight suggestion · Page {action.pageIndex + 1}: “{action.quote}”
-                </button>
-                : <div className="question-action-proposal" key={`${action.type}-${index}`}>
-                  Whiteboard note suggestion: “{action.text}” · position {Math.round(action.x * 100)}%, {Math.round(action.y * 100)}%
-                </div>)}
+              {item.status === "complete" && item.actions.map((action, index) => {
+                const actionId = `${item.id}-${index}`;
+                const description = action.type === "pdf_highlight"
+                  ? `PDF highlight · Page ${action.pageIndex + 1}: “${action.quote}”`
+                  : `Whiteboard note · “${action.text}”`;
+                return <div className="question-action-proposal" key={actionId}>
+                  <span>{description}</span>
+                  {appliedTutorActionIds.includes(actionId)
+                    ? <><span role="status">Applied and linked to page {item.sourceContext.pageIndex + 1}.</span><button type="button" onClick={() => onUndoTutorAction(actionId)}>Undo</button></>
+                    : dismissedTutorActionIds.includes(actionId)
+                      ? <><span role="status">Suggestion dismissed.</span><button type="button" onClick={() => onRestoreTutorAction(actionId)}>Restore suggestion</button></>
+                      : <><button type="button" onClick={() => {
+                        if (action.type === "pdf_highlight") onNavigateToPage(action.pageIndex);
+                        onApplyTutorAction(item.id, item.sourceContext.pageIndex, index, action);
+                      }}>Apply {action.type === "pdf_highlight" ? "PDF highlight" : "whiteboard note"}</button><button type="button" onClick={() => onDismissTutorAction(actionId)}>Dismiss</button></>}
+                </div>;
+              })}
             </div>
           </div>
         ))}
@@ -722,6 +756,8 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   const [boardOpen, setBoardOpen] = useState(false);
   const [whiteboardDrawing, setWhiteboardDrawing] = useState<WhiteboardStroke[]>([]);
   const [whiteboardDiagrams, setWhiteboardDiagrams] = useState<WhiteboardDiagram[]>([]);
+  const [tutorVisualMarks, setTutorVisualMarks] = useState<TutorVisualMark[]>([]);
+  const [dismissedTutorActionIds, setDismissedTutorActionIds] = useState<string[]>([]);
   const [drawingTurn, setDrawingTurn] = useState<DrawingQuestionRequest | null>(null);
   const [drawingContextStatus, setDrawingContextStatus] = useState("");
   const drawingTurnId = useRef(0);
@@ -782,6 +818,8 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
       whiteboardOpen: boardOpen,
       whiteboardDrawing,
       whiteboardDiagrams,
+      tutorVisualMarks,
+      dismissedTutorActionIds,
       captionsEnabled,
       captionTransparency,
       captionContrast,
@@ -824,6 +862,30 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
   };
   const finishDrawingTurn = (id: number) => {
     setDrawingTurn((current) => current?.id === id ? null : current);
+  };
+  const applyTutorAction = (
+    questionId: string,
+    pageIndex: number,
+    actionIndex: number,
+    action: LearningQuestionAction,
+  ) => {
+    const id = `${questionId}-${actionIndex}`;
+    setTutorVisualMarks((current) => current.some((mark) => mark.id === id)
+      ? current
+      : [...current, action.type === "pdf_highlight"
+        ? { id, questionId, type: action.type, pageIndex: action.pageIndex, quote: action.quote, spanIds: action.spanIds }
+        : { id, questionId, type: action.type, pageIndex, text: action.text, x: action.x, y: action.y }]);
+    setDismissedTutorActionIds((current) => current.filter((actionId) => actionId !== id));
+    if (action.type === "whiteboard_label") setBoardOpen(true);
+  };
+  const dismissTutorAction = (actionId: string) => {
+    setDismissedTutorActionIds((current) => current.includes(actionId) ? current : [...current, actionId]);
+  };
+  const restoreTutorAction = (actionId: string) => {
+    setDismissedTutorActionIds((current) => current.filter((id) => id !== actionId));
+  };
+  const undoTutorAction = (actionId: string) => {
+    setTutorVisualMarks((current) => current.filter((mark) => mark.id !== actionId));
   };
   useEffect(() => {
     if (!continueAutomatically || teacherState !== "complete") return;
@@ -895,6 +957,8 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
           ? []
           : initialWorkspaceState.whiteboardDiagrams,
     );
+    setTutorVisualMarks(workspace?.tutorVisualMarks ?? []);
+    setDismissedTutorActionIds(workspace?.dismissedTutorActionIds ?? []);
     setCaptionsEnabled(workspace?.captionsEnabled ?? false);
     setCaptionTransparency(workspace?.captionTransparency ?? 18);
     setCaptionContrast(workspace?.captionContrast ?? 100);
@@ -908,6 +972,8 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
           : saved?.hasSavedState
             ? []
             : initialWorkspaceState.whiteboardDiagrams,
+        tutorVisualMarks: workspace?.tutorVisualMarks ?? [],
+        dismissedTutorActionIds: workspace?.dismissedTutorActionIds ?? [],
       },
     };
     persistedSnapshot.current = JSON.stringify(restored);
@@ -931,7 +997,21 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
           : workspace.whiteboardDiagrams,
       );
     }
-  }, [learningState?.workspaceState.whiteboardOpen, learningState?.workspaceState.whiteboardDrawing, learningState?.workspaceState.whiteboardDiagrams]);
+    if (workspace?.tutorVisualMarks) {
+      setTutorVisualMarks((current) =>
+        JSON.stringify(current) === JSON.stringify(workspace.tutorVisualMarks)
+          ? current
+          : workspace.tutorVisualMarks ?? [],
+      );
+    }
+    if (workspace?.dismissedTutorActionIds) {
+      setDismissedTutorActionIds((current) =>
+        JSON.stringify(current) === JSON.stringify(workspace.dismissedTutorActionIds)
+          ? current
+          : workspace.dismissedTutorActionIds ?? [],
+      );
+    }
+  }, [learningState?.workspaceState.whiteboardOpen, learningState?.workspaceState.whiteboardDrawing, learningState?.workspaceState.whiteboardDiagrams, learningState?.workspaceState.tutorVisualMarks, learningState?.workspaceState.dismissedTutorActionIds]);
   useEffect(() => {
     if (!learningDocument) return;
     if (restoringState.current) {
@@ -943,7 +1023,7 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
     if (persistedSnapshot.current === serialized) return;
     persistedSnapshot.current = serialized;
     onWorkspaceChangeRef.current(learningDocument, next);
-  }, [learningDocument?.id, currentPage, zoom, teacherState, selectionContext, transcript, boardOpen, whiteboardDrawing, whiteboardDiagrams, captionsEnabled, captionTransparency, captionContrast]);
+  }, [learningDocument?.id, currentPage, zoom, teacherState, selectionContext, transcript, boardOpen, whiteboardDrawing, whiteboardDiagrams, tutorVisualMarks, dismissedTutorActionIds, captionsEnabled, captionTransparency, captionContrast]);
   if (!learningDocument) return null;
   const setDocumentPage = (page: number) => {
     setSelectionContext(null);
@@ -974,17 +1054,17 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
         <Suspense fallback={<p className="document-library-message" role="status">Opening your document…</p>}>
           {appConfig.demoMode
             ? <DocumentPage page={currentPage} searchQuery={searchQuery} />
-            : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} searchQuery={searchQuery} onAskSelection={(text, pageIndex, spanIds) => setSelectionContext({ text, pageIndex, spanIds })} />}
+            : <DocumentTextPreview documentId={learningDocument.id} pageCount={pageCount} pageIndex={currentPage - 1} zoom={zoom} searchQuery={searchQuery} tutorHighlightSpanIds={tutorVisualMarks.flatMap((mark) => mark.type === "pdf_highlight" && mark.pageIndex === currentPage - 1 ? mark.spanIds : [])} onAskSelection={(text, pageIndex, spanIds) => setSelectionContext({ text, pageIndex, spanIds })} />}
         </Suspense>
       </section>
-      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} documentId={learningDocument.id} currentPage={currentPage} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} onClearSelection={() => setSelectionContext(null)} onCaptionTextChange={setCaptionText} drawingTurn={drawingTurn} onDrawingTurnHandled={finishDrawingTurn} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} onResizeStart={() => {
+      <TeacherPanel state={teacherState} setState={changeTeacherState} selectionContext={selectionContext} transcript={transcript} documentId={learningDocument.id} currentPage={currentPage} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} onClearSelection={() => setSelectionContext(null)} onCaptionTextChange={setCaptionText} drawingTurn={drawingTurn} onDrawingTurnHandled={finishDrawingTurn} appliedTutorActionIds={tutorVisualMarks.map((mark) => mark.id)} dismissedTutorActionIds={dismissedTutorActionIds} onApplyTutorAction={applyTutorAction} onDismissTutorAction={dismissTutorAction} onRestoreTutorAction={restoreTutorAction} onUndoTutorAction={undoTutorAction} autoPlayExplanations={autoPlayExplanations} speakingSpeed={speakingSpeed} voice={voice} learningLevel={learningLevel} onResizeStart={() => {
         resizing.current = true;
         document.body.style.cursor = "col-resize";
         document.body.style.userSelect = "none";
       }} />
     </div>
     {captionsEnabled && <div className="workspace-caption-overlay" style={{ "--teacher-panel-width": `${teacherWidth}px` } as React.CSSProperties}><LiveCaptions text={captionText} transparency={captionTransparency} contrast={captionContrast} textSize={captionTextSize} position={captionPosition} /></div>}
-    {boardOpen && <Whiteboard onClose={() => { setBoardOpen(false); checkpoint({ whiteboardOpen: false }); }} drawing={whiteboardDrawing} onDrawingChange={setWhiteboardDrawing} diagrams={whiteboardDiagrams} onDiagramsChange={setWhiteboardDiagrams} />}
+    {boardOpen && <Whiteboard onClose={() => { setBoardOpen(false); checkpoint({ whiteboardOpen: false }); }} drawing={whiteboardDrawing} onDrawingChange={setWhiteboardDrawing} diagrams={whiteboardDiagrams} onDiagramsChange={setWhiteboardDiagrams} tutorMarks={tutorVisualMarks} onRemoveTutorMark={undoTutorAction} onNavigateToPage={(pageIndex) => setDocumentPage(pageIndex + 1)} />}
     <footer className="lesson-controls">
       <div className="lesson-main-controls">
         <IconButton icon="previous" label="Previous page" onClick={() => setDocumentPage(currentPage - 1)} />

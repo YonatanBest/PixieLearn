@@ -63,10 +63,12 @@ class OpenAICompatibleQuestionProvider:
                     "content": (
                         f"{INTENT_INSTRUCTIONS[intent]} Answer the learner using only the supplied source context. "
                         "When a whiteboard image is supplied, discuss observable marks and use them as learner context, "
-                        "not as verified source evidence. "
+                        "compare them with the source, distinguish likely-correct elements from uncertainty, "
+                        "and ask for clarification when the drawing is ambiguous; do not treat them as verified source evidence. "
                         "Return JSON with answer, citations, and actions. Each citation must include "
                         "a verbatim quote and supported span IDs. Actions may be empty; use only "
-                        "pdf_highlight with a verbatim source quote or whiteboard_label with a "
+                        "pdf_highlight with a verbatim source quote and matching available span IDs, "
+                        "or whiteboard_label with a "
                         "verbatim source label and normalized x/y coordinates from 0 to 1. Actions "
                         "are proposals, never commands."
                     ),
