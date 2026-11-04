@@ -33,8 +33,16 @@ class WhiteboardLabelProposal(BaseModel):
     y: float = Field(ge=0, le=1)
 
 
+class QuizProposal(BaseModel):
+    type: Literal["quiz"]
+    question: str = Field(min_length=1, max_length=500)
+    options: list[str] = Field(min_length=2, max_length=5)
+    correct_index: int = Field(ge=0, le=4, alias="correctIndex")
+    explanation: str = Field(min_length=1, max_length=1000)
+
+
 QuestionActionProposal = Annotated[
-    PdfHighlightProposal | WhiteboardLabelProposal,
+    PdfHighlightProposal | WhiteboardLabelProposal | QuizProposal,
     Field(discriminator="type"),
 ]
 

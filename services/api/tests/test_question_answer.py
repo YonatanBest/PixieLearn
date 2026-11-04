@@ -221,6 +221,32 @@ def test_openai_compatible_provider_sends_board_image_as_an_image_url(monkeypatc
     assert "do not treat them as verified source evidence" in request_data["messages"][0]["content"]
 
 
+def test_validate_quiz_action() -> None:
+    from app.routers.questions import _validate_actions
+    from app.question_answer import QuizProposal
+
+    answer = QuestionAnswer(
+        answer="Here is a quiz.",
+        citations=[QuestionCitation(quote="uses sunlight", span_ids=["span-1"])],
+        actions=[
+            QuizProposal(
+                type="quiz",
+                question="What process is used?",
+                options=["Photosynthesis", "Respiration"],
+                correctIndex=0,
+                explanation="Photosynthesis uses sunlight.",
+            )
+        ],
+    )
+    source = QuestionSourceContext(mode="page", page_index=0, text="Photosynthesis uses sunlight.", span_ids=["span-1"])
+    validated = _validate_actions(answer, source)
+    assert len(validated) == 1
+    assert validated[0]["type"] == "quiz"
+    assert validated[0]["question"] == "What process is used?"
+    assert validated[0]["options"] == ["Photosynthesis", "Respiration"]
+    assert validated[0]["correctIndex"] == 0
+
+
 def test_learning_question_rejects_whiteboard_images_over_one_mib() -> None:
     image = "data:image/jpeg;base64," + base64.b64encode(
         b"\xff\xd8\xff" + b"\x00" * 1_048_576,

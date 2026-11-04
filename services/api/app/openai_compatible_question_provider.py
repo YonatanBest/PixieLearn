@@ -70,7 +70,8 @@ class OpenAICompatibleQuestionProvider:
                         "a verbatim quote and supported span IDs. Actions may be empty; use only "
                         "pdf_highlight with a verbatim source quote and matching available span IDs, "
                         "or whiteboard_label with a "
-                        "verbatim source label and normalized x/y coordinates from 0 to 1. Actions "
+                        "verbatim source label and normalized x/y coordinates from 0 to 1, or quiz "
+                        "with question, options (list), correctIndex, and explanation. Actions "
                         "are proposals, never commands."
                     ),
                 },

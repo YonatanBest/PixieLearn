@@ -39,7 +39,7 @@ test("loads valid auth configuration", () => {
 });
 
 test("supports the legacy single frontend origin setting", () => {
-  const result = importEnvironment({ FRONTEND_URL: "http://localhost:8443" });
+  const result = importEnvironment({ FRONTEND_URLS: "", FRONTEND_URL: "http://localhost:8443" });
 
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), ["http://localhost:8443"]);

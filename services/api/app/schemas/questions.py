@@ -81,8 +81,18 @@ class WhiteboardLabelAction(BaseModel):
     y: float = Field(ge=0, le=1)
 
 
+class QuizAction(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    type: Literal["quiz"] = "quiz"
+    question: str = Field(min_length=1, max_length=500)
+    options: list[str] = Field(min_length=2, max_length=5)
+    correct_index: int = Field(ge=0, le=4)
+    explanation: str = Field(min_length=1, max_length=1000)
+
+
 LearningQuestionAction = Annotated[
-    PdfHighlightAction | WhiteboardLabelAction,
+    PdfHighlightAction | WhiteboardLabelAction | QuizAction,
     Field(discriminator="type"),
 ]
 

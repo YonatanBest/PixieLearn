@@ -16,7 +16,8 @@ export type QuestionCitation = {
 
 export type LearningQuestionAction =
   | { type: "pdf_highlight"; pageIndex: number; quote: string; spanIds: string[] }
-  | { type: "whiteboard_label"; text: string; x: number; y: number };
+  | { type: "whiteboard_label"; text: string; x: number; y: number }
+  | { type: "quiz"; question: string; options: string[]; correctIndex: number; explanation: string };
 
 export type LearningQuestion = {
   id: string;

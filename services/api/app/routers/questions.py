@@ -104,13 +104,12 @@ def _validate_answer(answer: QuestionAnswer, source: QuestionSourceContext) -> l
         normalized_quote = normalize_source_text(citation.quote)
         if not normalized_quote or normalized_quote not in normalized_source:
             raise QuestionProviderRequestError("The provider returned an unsupported source citation.")
-        if any(span_id not in allowed_span_ids for span_id in citation.span_ids):
-            raise QuestionProviderRequestError("The provider returned an unsupported source span.")
+        valid_spans = [span_id for span_id in citation.span_ids if span_id in allowed_span_ids]
         validated.append(
             LearningQuestionCitation(
                 page_index=source.page_index,
                 quote=citation.quote,
-                span_ids=citation.span_ids,
+                span_ids=valid_spans,
             ).model_dump(mode="json", by_alias=True)
         )
     return validated
@@ -125,19 +124,22 @@ def _validate_actions(answer: QuestionAnswer, source: QuestionSourceContext) -> 
             normalized_quote = normalize_source_text(action.quote)
             if not normalized_quote or normalized_quote not in normalized_source:
                 raise QuestionProviderRequestError("The provider returned an unsupported PDF highlight.")
-            if any(span_id not in allowed_span_ids for span_id in action.span_ids):
+            valid_spans = [span_id for span_id in action.span_ids if span_id in allowed_span_ids]
+            if action.span_ids and not valid_spans:
                 raise QuestionProviderRequestError("The provider returned an unsupported PDF highlight span.")
             validated.append(
                 PdfHighlightAction(
                     page_index=source.page_index,
                     quote=action.quote,
-                    span_ids=action.span_ids,
+                    span_ids=valid_spans,
                 ).model_dump(mode="json", by_alias=True)
             )
         elif action.type == "whiteboard_label":
             normalized_label = normalize_source_text(action.text)
             if not normalized_label or normalized_label not in normalized_source:
                 raise QuestionProviderRequestError("The provider returned an unsupported whiteboard label.")
+            validated.append(action.model_dump(mode="json", by_alias=True))
+        elif action.type == "quiz":
             validated.append(action.model_dump(mode="json", by_alias=True))
     return validated
 
