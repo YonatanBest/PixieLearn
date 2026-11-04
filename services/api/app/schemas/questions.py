@@ -6,11 +6,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 
+TutorIntent = Literal["ask", "repeat", "simpler", "deeper", "quiz"]
+
+
 class LearningQuestionCreate(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     question: str = Field(min_length=1, max_length=4_000)
     page_index: int = Field(ge=0)
+    intent: TutorIntent = "ask"
     selected_text: str | None = Field(default=None, min_length=1, max_length=10_000)
     selected_span_ids: list[str] = Field(default_factory=list, max_length=500)
 

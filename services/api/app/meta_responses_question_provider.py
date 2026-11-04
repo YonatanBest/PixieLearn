@@ -5,12 +5,13 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.question_answer import (
+    INTENT_INSTRUCTIONS,
     QuestionAnswer,
     QuestionAnswerProvider,
     QuestionProviderRequestError,
     QuestionProviderTimeoutError,
 )
-from app.schemas.questions import QuestionSourceContext
+from app.schemas.questions import QuestionSourceContext, TutorIntent
 
 
 class MetaResponsesQuestionProvider:
@@ -24,6 +25,8 @@ class MetaResponsesQuestionProvider:
         question: str,
         source: QuestionSourceContext,
         history: list[dict[str, str]],
+        *,
+        intent: TutorIntent = "ask",
     ) -> QuestionAnswer:
         input_messages = [
             {
@@ -46,6 +49,7 @@ class MetaResponsesQuestionProvider:
                         "text": json.dumps(
                             {
                                 "question": question,
+                                "intent": intent,
                                 "sourceText": source.text,
                                 "availableSpanIds": source.span_ids,
                             },
@@ -58,7 +62,8 @@ class MetaResponsesQuestionProvider:
         request = {
             "model": self.model,
             "instructions": (
-                "You are a source-grounded learning tutor. Answer using only the supplied source. "
+                "You are a source-grounded learning tutor. "
+                f"{INTENT_INSTRUCTIONS[intent]} Answer using only the supplied source. "
                 "Return a single JSON object with answer, citations, and actions. Each citation must "
                 "contain a verbatim quote and supported spanIds. Actions may be empty; use only "
                 "pdf_highlight with a verbatim source quote or whiteboard_label with a verbatim "

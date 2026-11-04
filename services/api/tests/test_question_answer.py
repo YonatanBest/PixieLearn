@@ -11,7 +11,7 @@ from app.question_answer import (
 )
 from app.meta_responses_question_provider import MetaResponsesQuestionProvider
 from app.openai_compatible_question_provider import OpenAICompatibleQuestionProvider
-from app.schemas.questions import QuestionSourceContext
+from app.schemas.questions import QuestionSourceContext, TutorIntent
 
 
 class FakeResponse:
@@ -62,6 +62,7 @@ def test_provider_sends_question_and_source_to_server_configured_endpoint(monkey
     assert request_data["payload"]["max_tokens"] == 1_200
     assert json.loads(request_data["payload"]["messages"][-1]["content"]) == {
         "question": "What does this use?",
+        "intent": "ask",
         "sourceText": "Photosynthesis uses sunlight.",
         "availableSpanIds": ["span-1"],
     }
@@ -134,6 +135,7 @@ def test_meta_provider_parses_json_output_and_preserves_source_context(monkeypat
         "What does this use?",
         QuestionSourceContext(mode="selection", page_index=0, text="Photosynthesis uses sunlight.", span_ids=["span-1"]),
         [],
+        intent="quiz",
     )
 
     assert answer.answer == "Photosynthesis uses sunlight."
@@ -144,9 +146,57 @@ def test_meta_provider_parses_json_output_and_preserves_source_context(monkeypat
     assert request_data["payload"]["input"][-1]["content"][0]["type"] == "input_text"
     assert json.loads(request_data["payload"]["input"][-1]["content"][0]["text"]) == {
         "question": "What does this use?",
+        "intent": "quiz",
         "sourceText": "Photosynthesis uses sunlight.",
         "availableSpanIds": ["span-1"],
     }
+    assert "multiple-choice comprehension check" in request_data["payload"]["instructions"]
+
+
+@pytest.mark.parametrize(
+    ("intent", "expected_instruction"),
+    [
+        ("repeat", "Restate the explanation"),
+        ("simpler", "more simply"),
+        ("deeper", "more detailed explanation"),
+        ("quiz", "multiple-choice comprehension check"),
+    ],
+)
+def test_openai_compatible_provider_uses_provider_neutral_tutor_intent(
+    monkeypatch,
+    intent: TutorIntent,
+    expected_instruction: str,
+) -> None:
+    request_data: dict = {}
+
+    def fake_post(_url, *, headers, json: dict, timeout):
+        request_data.update(json)
+        return FakeResponse(
+            '{"answer":"The source says sunlight is used.","citations":[{"quote":"uses sunlight","span_ids":["span-1"]}]}'
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleQuestionProvider(
+        url="https://provider.example.test/v1/chat/completions",
+        model="test-model",
+        api_key=None,
+        timeout=1,
+    )
+
+    provider.answer(
+        "Use the same page.",
+        QuestionSourceContext(
+            mode="selection",
+            page_index=0,
+            text="Photosynthesis uses sunlight.",
+            span_ids=["span-1"],
+        ),
+        [],
+        intent=intent,
+    )
+
+    assert expected_instruction in request_data["messages"][0]["content"]
+    assert json.loads(request_data["messages"][-1]["content"])["intent"] == intent
 
 
 def test_meta_provider_maps_timeouts_to_recoverable_provider_timeout(monkeypatch) -> None:

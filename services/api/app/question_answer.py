@@ -2,7 +2,15 @@ from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.questions import QuestionSourceContext
+from app.schemas.questions import QuestionSourceContext, TutorIntent
+
+INTENT_INSTRUCTIONS: dict[TutorIntent, str] = {
+    "ask": "Answer the learner's question.",
+    "repeat": "Restate the explanation from the conversation in different words without advancing the lesson.",
+    "simpler": "Explain the same concept more simply, using a concrete beginner-friendly analogy if useful.",
+    "deeper": "Give a more detailed explanation of the same concept without changing the active source.",
+    "quiz": "Create one short multiple-choice comprehension check based only on the source, and clearly identify the correct answer.",
+}
 
 
 class QuestionCitation(BaseModel):
@@ -56,4 +64,6 @@ class QuestionAnswerProvider(Protocol):
         question: str,
         source: QuestionSourceContext,
         history: list[dict[str, str]],
+        *,
+        intent: TutorIntent = "ask",
     ) -> QuestionAnswer: ...
