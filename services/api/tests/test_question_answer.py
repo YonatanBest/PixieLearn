@@ -1,7 +1,9 @@
+import base64
 import json
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from app.question_answer import (
     QuestionAnswer,
@@ -11,7 +13,7 @@ from app.question_answer import (
 )
 from app.meta_responses_question_provider import MetaResponsesQuestionProvider
 from app.openai_compatible_question_provider import OpenAICompatibleQuestionProvider
-from app.schemas.questions import QuestionSourceContext, TutorIntent
+from app.schemas.questions import LearningQuestionCreate, QuestionSourceContext, TutorIntent
 
 
 class FakeResponse:
@@ -149,8 +151,87 @@ def test_meta_provider_parses_json_output_and_preserves_source_context(monkeypat
         "intent": "quiz",
         "sourceText": "Photosynthesis uses sunlight.",
         "availableSpanIds": ["span-1"],
+        "visualContext": None,
     }
     assert "multiple-choice comprehension check" in request_data["payload"]["instructions"]
+
+
+def test_meta_provider_sends_board_image_as_an_image_block(monkeypatch) -> None:
+    request_data: dict = {}
+
+    class MetaResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "output_text": (
+                    '{"answer":"The drawing points toward sunlight.","citations":'
+                    '[{"quote":"uses sunlight","spanIds":["span-1"]}]}'
+                )
+            }
+
+    def fake_post(_url, *, headers, json: dict, timeout):
+        request_data.update(json)
+        return MetaResponse()
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = MetaResponsesQuestionProvider(api_key="server-secret", model="muse-spark-1.3", timeout=1)
+    image = "data:image/jpeg;base64,/9j/c3ludGhldGlj"
+
+    provider.answer(
+        "What does my drawing show?",
+        QuestionSourceContext(mode="page", page_index=0, text="Photosynthesis uses sunlight.", span_ids=["span-1"]),
+        [],
+        whiteboard_image=image,
+    )
+
+    content = request_data["input"][-1]["content"]
+    assert content[1] == {"type": "input_image", "image_url": image}
+    assert json.loads(content[0]["text"])["visualContext"] == "A snapshot of the learner's current whiteboard follows."
+
+
+def test_openai_compatible_provider_sends_board_image_as_an_image_url(monkeypatch) -> None:
+    request_data: dict = {}
+
+    def fake_post(_url, *, headers, json: dict, timeout):
+        request_data.update(json)
+        return FakeResponse(
+            '{"answer":"The source discusses sunlight.","citations":[{"quote":"uses sunlight","span_ids":["span-1"]}]}'
+        )
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    provider = OpenAICompatibleQuestionProvider(
+        url="https://provider.example.test/v1/chat/completions",
+        model="test-model",
+        api_key=None,
+        timeout=1,
+    )
+    image = "data:image/jpeg;base64,/9j/c3ludGhldGlj"
+
+    provider.answer(
+        "What does my drawing show?",
+        QuestionSourceContext(mode="page", page_index=0, text="Photosynthesis uses sunlight.", span_ids=["span-1"]),
+        [],
+        whiteboard_image=image,
+    )
+
+    content = request_data["messages"][-1]["content"]
+    assert content[1] == {"type": "image_url", "image_url": {"url": image}}
+    assert "not as verified source evidence" in request_data["messages"][0]["content"]
+
+
+def test_learning_question_rejects_whiteboard_images_over_one_mib() -> None:
+    image = "data:image/jpeg;base64," + base64.b64encode(
+        b"\xff\xd8\xff" + b"\x00" * 1_048_576,
+    ).decode("ascii")
+
+    with pytest.raises(ValidationError, match="between 1 byte and 1 MiB"):
+        LearningQuestionCreate(
+            question="What does this drawing show?",
+            page_index=0,
+            whiteboard_image=image,
+        )
 
 
 @pytest.mark.parametrize(

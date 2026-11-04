@@ -1042,7 +1042,7 @@ class FakeQuestionAnswerProvider:
             citations=[QuestionCitation(quote="uses sunlight", span_ids=["span-1", "span-2"])],
         )
         self.error = error
-        self.calls: list[tuple[str, QuestionSourceContext, list[dict[str, str]], str]] = []
+        self.calls: list[tuple[str, QuestionSourceContext, list[dict[str, str]], str, str | None]] = []
 
     def answer(
         self,
@@ -1051,8 +1051,9 @@ class FakeQuestionAnswerProvider:
         history: list[dict[str, str]],
         *,
         intent: str = "ask",
+        whiteboard_image: str | None = None,
     ) -> QuestionAnswer:
-        self.calls.append((question, source, history, intent))
+        self.calls.append((question, source, history, intent, whiteboard_image))
         if self.error:
             raise self.error
         return self.answer_value
@@ -1201,6 +1202,53 @@ def test_learning_question_rejects_unverified_selection_and_invalid_page(documen
     assert invalid_span.status_code == 422
     assert invalid_page.status_code == 422
     assert empty_question.status_code == 422
+    assert provider.calls == []
+
+
+def test_learning_question_forwards_bounded_board_image_without_persisting_it(document_api, monkeypatch) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    provider = FakeQuestionAnswerProvider()
+    monkeypatch.setitem(app.dependency_overrides, get_question_provider, lambda: provider)
+    image = "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8\xffsynthetic-board").decode("ascii")
+
+    response = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "What does this drawing show?", "pageIndex": 0, "whiteboardImage": image},
+    )
+
+    assert response.status_code == 201
+    assert provider.calls[0][4] == image
+    assert image not in response.text
+    with sessions() as session:
+        record = session.scalar(select(LearningQuestionRecord).where(
+            LearningQuestionRecord.document_id == document_id,
+        ))
+    assert record is not None
+    assert image not in json.dumps(record.source_context)
+    assert image not in record.question
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "data:image/svg+xml;base64,PHN2Zy8+",
+        "data:image/jpeg;base64,not-valid-base64",
+        "data:image/jpeg;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\nnot-jpeg").decode("ascii"),
+    ],
+)
+def test_learning_question_rejects_invalid_whiteboard_image_before_provider_call(document_api, monkeypatch, image) -> None:
+    client, _storage, sessions = document_api
+    document_id = create_question_document(sessions)
+    provider = FakeQuestionAnswerProvider()
+    monkeypatch.setitem(app.dependency_overrides, get_question_provider, lambda: provider)
+
+    response = client.post(
+        f"/api/documents/{document_id}/questions",
+        json={"question": "What does this drawing show?", "pageIndex": 0, "whiteboardImage": image},
+    )
+
+    assert response.status_code == 422
     assert provider.calls == []
 
 

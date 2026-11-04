@@ -66,4 +66,5 @@ class QuestionAnswerProvider(Protocol):
         history: list[dict[str, str]],
         *,
         intent: TutorIntent = "ask",
+        whiteboard_image: str | None = None,
     ) -> QuestionAnswer: ...

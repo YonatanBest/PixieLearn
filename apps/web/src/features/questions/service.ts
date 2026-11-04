@@ -21,6 +21,7 @@ export type LearningQuestionAction =
 export type LearningQuestion = {
   id: string;
   question: string;
+  visualContextSent?: boolean;
   answer: string | null;
   sourceContext: QuestionSourceContext;
   citations: QuestionCitation[];
@@ -42,6 +43,7 @@ export type AskLearningQuestion = {
   intent?: TutorIntent;
   selectedText?: string;
   selectedSpanIds?: string[];
+  whiteboardImage?: string;
 };
 
 function assertAuthenticatedMode(): void {
