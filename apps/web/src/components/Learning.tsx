@@ -1073,10 +1073,10 @@ export function Workspace({ openFloating, captionsEnabled, setCaptionsEnabled, c
         <IconButton icon="next" label="Next page" onClick={() => setDocumentPage(currentPage + 1)} />
       </div>
       <div className="lesson-actions">
-        <button><Icon name="repeat" />Repeat</button>
-        <button><Icon name="simple" />Simpler</button>
-        <button><Icon name="deeper" />Go deeper</button>
-        <button onClick={() => setTeacherState("quiz")}><Icon name="question" />Quiz me</button>
+        <button type="button" onClick={() => { if (!questionsUnavailable) void sendQuestion("Please repeat the explanation.", { pageIndex: currentPage - 1, intent: "repeat" }); }} disabled={questionsUnavailable || drawingTurn !== null}><Icon name="repeat" />Repeat</button>
+        <button type="button" onClick={() => { if (!questionsUnavailable) void sendQuestion("Can you explain this more simply?", { pageIndex: currentPage - 1, intent: "simpler" }); }} disabled={questionsUnavailable || drawingTurn !== null}><Icon name="simple" />Simpler</button>
+        <button type="button" onClick={() => { if (!questionsUnavailable) void sendQuestion("I want to go deeper on this topic.", { pageIndex: currentPage - 1, intent: "deeper" }); }} disabled={questionsUnavailable || drawingTurn !== null}><Icon name="deeper" />Go deeper</button>
+        <button type="button" onClick={() => { if (!questionsUnavailable) void sendQuestion("Give me a quiz on this.", { pageIndex: currentPage - 1, intent: "quiz" }); else setTeacherState("quiz"); }}><Icon name="question" />Quiz me</button>
         <button type="button" onClick={() => void askAboutDrawing()} disabled={drawingTurn !== null || appConfig.demoMode || whiteboardDrawing.length === 0} title={whiteboardDrawing.length === 0 ? "Draw on the whiteboard before asking for feedback" : undefined}>Ask Pixie about my drawing</button>
       </div>
       {drawingContextStatus && <p className="question-source-context" role="status">{drawingContextStatus}</p>}
