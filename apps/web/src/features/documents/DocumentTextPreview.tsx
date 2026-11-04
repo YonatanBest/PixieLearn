@@ -19,9 +19,10 @@ type Props = {
   zoom: number
   onAskSelection: (text: string, pageIndex: number, spanIds: string[]) => void
   searchQuery?: string
+  tutorHighlightSpanIds?: string[]
 }
 
-export default function DocumentTextPreview({ documentId, pageCount, pageIndex, zoom, onAskSelection, searchQuery = "" }: Props) {
+export default function DocumentTextPreview({ documentId, pageCount, pageIndex, zoom, onAskSelection, searchQuery = "", tutorHighlightSpanIds = [] }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const pdfRef = useRef<PDFDocumentProxy | null>(null)
   const pdfLoadingTaskRef = useRef<PDFDocumentLoadingTask | null>(null)
@@ -157,7 +158,7 @@ export default function DocumentTextPreview({ documentId, pageCount, pageIndex, 
       {loading && <p className="document-library-message" role="status">Loading page and parsed text…</p>}
       <div className="learning-pdf-paper">
         <canvas ref={canvasRef} aria-label={`PDF page ${pageIndex + 1}`} />
-        {pageText && <ParsedTextOverlay spans={pageText.spans} pagePixelHeight={pagePixelHeight} onSelectionChange={handleSelectionChange} searchQuery={searchQuery} />}
+        {pageText && <ParsedTextOverlay spans={pageText.spans} pagePixelHeight={pagePixelHeight} onSelectionChange={handleSelectionChange} searchQuery={searchQuery} tutorHighlightSpanIds={tutorHighlightSpanIds} />}
       </div>
       {selectedText && (
         <div className="document-selection-action">

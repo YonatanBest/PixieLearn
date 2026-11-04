@@ -69,6 +69,7 @@ class PdfHighlightAction(BaseModel):
     type: Literal["pdf_highlight"] = "pdf_highlight"
     page_index: int = Field(ge=0)
     quote: str = Field(min_length=1, max_length=500)
+    span_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class WhiteboardLabelAction(BaseModel):

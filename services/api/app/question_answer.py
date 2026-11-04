@@ -23,6 +23,7 @@ class QuestionCitation(BaseModel):
 class PdfHighlightProposal(BaseModel):
     type: Literal["pdf_highlight"]
     quote: str = Field(min_length=1, max_length=500)
+    span_ids: list[str] = Field(min_length=1, max_length=500, alias="spanIds")
 
 
 class WhiteboardLabelProposal(BaseModel):

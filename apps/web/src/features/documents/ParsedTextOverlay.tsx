@@ -6,13 +6,16 @@ export default function ParsedTextOverlay({
   pagePixelHeight,
   onSelectionChange,
   searchQuery = "",
+  tutorHighlightSpanIds = [],
 }: {
   spans: PageText["spans"]
   pagePixelHeight: number
   onSelectionChange: (text: string, spanIds: string[]) => void
   searchQuery?: string
+  tutorHighlightSpanIds?: string[]
 }) {
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase()
+  const highlightedSpanIds = new Set(tutorHighlightSpanIds)
 
   function readSelection(event: SyntheticEvent<HTMLDivElement>) {
     const selection = window.getSelection()
@@ -43,7 +46,7 @@ export default function ParsedTextOverlay({
       {spans.map((span) => (
         <span
           key={span.id}
-          className={`parsed-text-span${normalizedQuery.split(/\s+/).some((term) => term && span.text.toLocaleLowerCase().includes(term)) ? " parsed-text-span-match" : ""}`}
+          className={`parsed-text-span${normalizedQuery.split(/\s+/).some((term) => term && span.text.toLocaleLowerCase().includes(term)) ? " parsed-text-span-match" : ""}${highlightedSpanIds.has(span.id) ? " parsed-text-span-tutor-highlight" : ""}`}
           data-span-id={span.id}
           style={{
             left: `${span.bbox.x * 100}%`,

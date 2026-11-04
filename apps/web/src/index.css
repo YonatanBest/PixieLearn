@@ -468,6 +468,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .whiteboard-notice { position: absolute; z-index: 3; right: 12px; bottom: 8px; margin: 0; padding: 6px 9px; border-radius: 6px; background: #302120; color: #ffd4cf; font-size: calc(10px * var(--ui-font-scale, 1)); }
 .whiteboard-drawing { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 2; }
 .whiteboard-drawing.is-enabled { pointer-events: all; touch-action: none; cursor: crosshair; }
+.whiteboard-tutor-marks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
+.whiteboard-tutor-mark { position: absolute; transform: translate(-50%, -100%); margin-top: -12px; pointer-events: auto; display: flex; align-items: center; gap: 4px; padding: 4px 6px; background: rgba(255, 255, 255, .9); border: 1px solid var(--violet); border-radius: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, .1); white-space: nowrap; font-size: calc(9px * var(--ui-font-scale, 1)); font-weight: 500; animation: mark-pop-in .2s cubic-bezier(.2,.8,.2,1); }
+.whiteboard-tutor-mark::after { content: ""; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%); border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid var(--violet); }
+.whiteboard-tutor-mark span { color: var(--violet); margin-right: 2px; }
+.whiteboard-tutor-mark button { height: 20px; padding: 0 6px; border: 1px solid rgba(0,0,0,.1); border-radius: 4px; background: rgba(0,0,0,.03); color: #333; font: inherit; cursor: pointer; }
+.whiteboard-tutor-mark button:hover { background: rgba(0,0,0,.08); }
+@keyframes mark-pop-in { from { opacity: 0; transform: translate(-50%, -90%) scale(.9); } }
 .flow-row, .output-flow { display: flex; align-items: center; justify-content: center; gap: 12px; position: relative; z-index: 2; }
 .flow-card { width: 110px; height: 84px; border: 2px solid #777; border-radius: 12px; background: rgba(255,255,255,.78); display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 4px; box-shadow: 2px 3px 0 rgba(0,0,0,.08); }
 .flow-card > span { font: 700 calc(24px * var(--ui-font-scale, 1)) "Source Serif 4", serif; }

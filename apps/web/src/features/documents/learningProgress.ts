@@ -42,6 +42,25 @@ export type WhiteboardDiagram = {
   createdBy: "assistant" | "learner" | "mock"
 }
 
+export type TutorVisualMark =
+  | {
+    id: string
+    questionId: string
+    type: "pdf_highlight"
+    pageIndex: number
+    quote: string
+    spanIds: string[]
+  }
+  | {
+    id: string
+    questionId: string
+    type: "whiteboard_label"
+    pageIndex: number
+    text: string
+    x: number
+    y: number
+  }
+
 export type WorkspaceState = {
   teacherState: "teaching" | "quiz" | "feedback" | "question" | "paused" | "complete"
   selectionContext: SelectionContext | null
@@ -49,6 +68,8 @@ export type WorkspaceState = {
   whiteboardOpen: boolean
   whiteboardDrawing: WhiteboardStroke[]
   whiteboardDiagrams: WhiteboardDiagram[]
+  tutorVisualMarks?: TutorVisualMark[]
+  dismissedTutorActionIds?: string[]
   captionsEnabled: boolean
   captionTransparency: number
   captionContrast: number
@@ -106,6 +127,8 @@ export const emptyWorkspaceState: WorkspaceState = {
   whiteboardOpen: false,
   whiteboardDrawing: [],
   whiteboardDiagrams: [],
+  tutorVisualMarks: [],
+  dismissedTutorActionIds: [],
   captionsEnabled: false,
   captionTransparency: 18,
   captionContrast: 100,

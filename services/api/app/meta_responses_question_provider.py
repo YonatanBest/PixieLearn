@@ -77,10 +77,12 @@ class MetaResponsesQuestionProvider:
                 f"{INTENT_INSTRUCTIONS[intent]} Answer using only the supplied source. "
                 "Return a single JSON object with answer, citations, and actions. Each citation must "
                 "contain a verbatim quote and supported spanIds. Actions may be empty; use only "
-                "pdf_highlight with a verbatim source quote or whiteboard_label with a verbatim "
+                "pdf_highlight with a verbatim source quote and one or more matching available spanIds, "
+                "or whiteboard_label with a verbatim "
                 "source label and normalized x/y coordinates from 0 to 1. When a whiteboard image "
-                "is supplied, discuss observable learner marks but do not treat them as verified "
-                "source evidence. Actions are proposals, "
+                "is supplied, discuss observable learner marks, distinguish what matches the source "
+                "from uncertainty, and ask for clarification when the drawing is ambiguous. Do not treat "
+                "learner marks as verified source evidence. Actions are proposals, "
                 "not commands, and must not invent facts."
             ),
             "input": input_messages,

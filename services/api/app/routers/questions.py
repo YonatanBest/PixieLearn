@@ -118,16 +118,20 @@ def _validate_answer(answer: QuestionAnswer, source: QuestionSourceContext) -> l
 
 def _validate_actions(answer: QuestionAnswer, source: QuestionSourceContext) -> list[dict]:
     normalized_source = normalize_source_text(source.text)
+    allowed_span_ids = set(source.span_ids)
     validated: list[dict] = []
     for action in answer.actions:
         if action.type == "pdf_highlight":
             normalized_quote = normalize_source_text(action.quote)
             if not normalized_quote or normalized_quote not in normalized_source:
                 raise QuestionProviderRequestError("The provider returned an unsupported PDF highlight.")
+            if any(span_id not in allowed_span_ids for span_id in action.span_ids):
+                raise QuestionProviderRequestError("The provider returned an unsupported PDF highlight span.")
             validated.append(
                 PdfHighlightAction(
                     page_index=source.page_index,
                     quote=action.quote,
+                    span_ids=action.span_ids,
                 ).model_dump(mode="json", by_alias=True)
             )
         elif action.type == "whiteboard_label":

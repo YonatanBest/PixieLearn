@@ -48,7 +48,7 @@ export function FloatingTutor({ onOpen, onLessonPaused, captionsEnabled, setCapt
       </div>
       <form onSubmit={(event) => { event.preventDefault(); if (input.trim()) ask(input); }}><button type="button" className="input-add" aria-label="Add attachment"><Icon name="plus" /></button><input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask about what’s on screen..." /><MuteButton muted={muted} onToggle={() => setMuted(!muted)} /><button className="send-button" type="submit" aria-label="Send"><Icon name="send" /></button></form>
     </section>}
-    {whiteboardOpen && <Whiteboard onClose={() => onWhiteboardOpenChange(false)} drawing={whiteboardDrawing} onDrawingChange={onWhiteboardDrawingChange} diagrams={whiteboardDiagrams} onDiagramsChange={onWhiteboardDiagramsChange} />}
+    {whiteboardOpen && <Whiteboard onClose={() => onWhiteboardOpenChange(false)} drawing={whiteboardDrawing} onDrawingChange={onWhiteboardDrawingChange} diagrams={whiteboardDiagrams} onDiagramsChange={onWhiteboardDiagramsChange} tutorMarks={[]} onRemoveTutorMark={() => undefined} onNavigateToPage={() => undefined} />}
     <footer className="floating-lesson-bar">
       <div className="floating-lesson-controls">
         <IconButton icon="previous" label="Previous page" onClick={() => setPage(currentPage - 1)} />
