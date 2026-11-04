@@ -12,7 +12,6 @@ from app.question_answer import (
     QuestionProviderTimeoutError,
 )
 from app.gemini_question_provider import create_gemini_question_answer_provider
-from app.meta_responses_question_provider import create_meta_question_answer_provider
 from app.schemas.questions import QuestionSourceContext, TutorIntent
 
 
@@ -27,7 +26,7 @@ class OpenAICompatibleQuestionProvider:
     ) -> None:
         self.url = url
         self.model = model
-        self.api_key = api_key
+        self.api_key = api_key.strip("'\" \t\r\n") if api_key else None
         self.timeout = timeout
 
     def answer(
@@ -92,7 +91,15 @@ class OpenAICompatibleQuestionProvider:
                 timeout=self.timeout,
             )
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("The provider response was not a JSON object.")
+            if "choices" in payload and isinstance(payload["choices"], list) and payload["choices"]:
+                content = payload["choices"][0]["message"]["content"]
+            elif "output_text" in payload and isinstance(payload["output_text"], str):
+                content = payload["output_text"]
+            else:
+                raise ValueError("The provider response content was malformed.")
             return QuestionAnswer.model_validate_json(content)
         except httpx.TimeoutException as error:
             raise QuestionProviderTimeoutError from error
@@ -115,6 +122,12 @@ def create_question_answer_provider(settings: Settings) -> QuestionAnswerProvide
             api_key=settings.ai_api_key,
             timeout=settings.ai_request_timeout_seconds,
         )
+    from app.meta_responses_question_provider import create_meta_question_answer_provider
+
+    meta_provider = create_meta_question_answer_provider(settings)
+    if meta_provider is not None:
+        return meta_provider
     if settings.gemini_api_key:
         return create_gemini_question_answer_provider(settings)
-    return create_meta_question_answer_provider(settings)
+    return None
+

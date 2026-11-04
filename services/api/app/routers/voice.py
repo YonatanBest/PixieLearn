@@ -2,6 +2,7 @@ import base64
 import binascii
 import json
 import logging
+import os
 import wave
 from io import BytesIO
 from uuid import UUID
@@ -64,8 +65,17 @@ def transcribe_learning_question(
     settings: Settings = Depends(get_settings),
 ) -> LearningQuestionAudioTranscript:
     document_id = _owned_document(session, document_id, user.id)
-    if not settings.meta_model_api_key:
+    api_key = (
+        settings.meta_model_api_key
+        or settings.model_api_key
+        or settings.meta_api_key
+        or os.getenv("MODEL_API_KEY")
+        or os.getenv("META_API_KEY")
+        or os.getenv("META_MODEL_API_KEY")
+    )
+    if not api_key:
         raise HTTPException(status_code=503, detail="Voice questions are not configured on this server.")
+    api_key = api_key.strip("'\" \t\r\n")
     audio = file.file.read(MAX_AUDIO_BYTES + 1)
     if len(audio) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Voice recording must be 25 MiB or smaller.")
@@ -73,7 +83,7 @@ def transcribe_learning_question(
     try:
         response = httpx.post(
             "https://api.meta.ai/v1/asr/transcribe",
-            headers={"Authorization": f"Bearer {settings.meta_model_api_key}"},
+            headers={"Authorization": f"Bearer {api_key}"},
             data={
                 "request": json.dumps(
                     {
@@ -126,10 +136,11 @@ def synthesize_learning_answer(
         raise HTTPException(status_code=404, detail="Question not found.")
     if not settings.gemini_api_key:
         raise HTTPException(status_code=503, detail="Tutor speech is not configured on this server.")
+    gemini_key = settings.gemini_api_key.strip("'\" \t\r\n")
     try:
         response = httpx.post(
             "https://generativelanguage.googleapis.com/v1beta/interactions",
-            headers={"x-goog-api-key": settings.gemini_api_key},
+            headers={"x-goog-api-key": gemini_key},
             json={
                 "model": settings.gemini_tts_model,
                 "input": [

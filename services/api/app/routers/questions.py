@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -96,13 +97,25 @@ def _conversation_history(session: Session, document_id: UUID, owner_id: str) ->
     return history
 
 
+def _quote_in_source(quote: str, normalized_source: str) -> bool:
+    normalized_quote = normalize_source_text(quote).strip("\"'")
+    if not normalized_quote:
+        return False
+    if normalized_quote in normalized_source:
+        return True
+    if "..." in normalized_quote or "…" in normalized_quote:
+        parts = [part.strip() for part in re.split(r"\.\.\.|…", normalized_quote) if part.strip()]
+        if len(parts) >= 2 and all(len(part) >= 3 and part in normalized_source for part in parts):
+            return True
+    return False
+
+
 def _validate_answer(answer: QuestionAnswer, source: QuestionSourceContext) -> list[dict]:
     normalized_source = normalize_source_text(source.text)
     allowed_span_ids = set(source.span_ids)
     validated: list[dict] = []
     for citation in answer.citations:
-        normalized_quote = normalize_source_text(citation.quote)
-        if not normalized_quote or normalized_quote not in normalized_source:
+        if not _quote_in_source(citation.quote, normalized_source):
             raise QuestionProviderRequestError("The provider returned an unsupported source citation.")
         valid_spans = [span_id for span_id in citation.span_ids if span_id in allowed_span_ids]
         validated.append(
@@ -121,8 +134,7 @@ def _validate_actions(answer: QuestionAnswer, source: QuestionSourceContext) -> 
     validated: list[dict] = []
     for action in answer.actions:
         if action.type == "pdf_highlight":
-            normalized_quote = normalize_source_text(action.quote)
-            if not normalized_quote or normalized_quote not in normalized_source:
+            if not _quote_in_source(action.quote, normalized_source):
                 raise QuestionProviderRequestError("The provider returned an unsupported PDF highlight.")
             valid_spans = [span_id for span_id in action.span_ids if span_id in allowed_span_ids]
             if action.span_ids and not valid_spans:
@@ -135,8 +147,7 @@ def _validate_actions(answer: QuestionAnswer, source: QuestionSourceContext) -> 
                 ).model_dump(mode="json", by_alias=True)
             )
         elif action.type == "whiteboard_label":
-            normalized_label = normalize_source_text(action.text)
-            if not normalized_label or normalized_label not in normalized_source:
+            if not _quote_in_source(action.text, normalized_source):
                 raise QuestionProviderRequestError("The provider returned an unsupported whiteboard label.")
             validated.append(action.model_dump(mode="json", by_alias=True))
         elif action.type == "quiz":
@@ -246,6 +257,7 @@ def ask_learning_question(
         record.status = "failed"
         record.failure_message = "Pixie could not answer this question. Try again."
         session.commit()
+        logger.warning("question_answer_request_failed document_id=%s error=%s", document.id, error)
         raise HTTPException(status_code=502, detail=record.failure_message) from error
     except SQLAlchemyError as error:
         session.rollback()

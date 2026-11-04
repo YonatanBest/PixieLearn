@@ -1,6 +1,6 @@
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.questions import QuestionSourceContext, TutorIntent
 
@@ -21,12 +21,16 @@ class QuestionCitation(BaseModel):
 
 
 class PdfHighlightProposal(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     type: Literal["pdf_highlight"]
     quote: str = Field(min_length=1, max_length=500)
     span_ids: list[str] = Field(min_length=1, max_length=500, alias="spanIds")
 
 
 class WhiteboardLabelProposal(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     type: Literal["whiteboard_label"]
     text: str = Field(min_length=1, max_length=120)
     x: float = Field(ge=0, le=1)
@@ -34,6 +38,8 @@ class WhiteboardLabelProposal(BaseModel):
 
 
 class QuizProposal(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     type: Literal["quiz"]
     question: str = Field(min_length=1, max_length=500)
     options: list[str] = Field(min_length=2, max_length=5)
@@ -53,6 +59,21 @@ class QuestionAnswer(BaseModel):
     answer: str = Field(min_length=1, max_length=12_000)
     citations: list[QuestionCitation] = Field(min_length=1, max_length=20)
     actions: list[QuestionActionProposal] = Field(default_factory=list, max_length=4)
+
+    @field_validator("actions", mode="before")
+    @classmethod
+    def normalize_wrapped_actions(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        normalized: list[Any] = []
+        for item in value:
+            if isinstance(item, dict) and "type" not in item and len(item) == 1:
+                key, inner = next(iter(item.items()))
+                if key in ("pdf_highlight", "whiteboard_label", "quiz") and isinstance(inner, dict):
+                    normalized.append({"type": key, **inner})
+                    continue
+            normalized.append(item)
+        return normalized
 
 
 class QuestionProviderTimeoutError(Exception):

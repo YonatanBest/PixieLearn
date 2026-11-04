@@ -1,4 +1,6 @@
 import json
+import os
+import re
 
 import httpx
 from pydantic import ValidationError
@@ -14,9 +16,17 @@ from app.question_answer import (
 from app.schemas.questions import QuestionSourceContext, TutorIntent
 
 
+def _strip_json_code_fence(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    return stripped
+
+
 class MetaResponsesQuestionProvider:
     def __init__(self, *, api_key: str, model: str, timeout: float) -> None:
-        self.api_key = api_key
+        self.api_key = api_key.strip("'\" \t\r\n")
         self.model = model
         self.timeout = timeout
 
@@ -72,22 +82,26 @@ class MetaResponsesQuestionProvider:
         )
         request = {
             "model": self.model,
+            "reasoning": {"effort": "low"},
             "instructions": (
                 "You are a source-grounded learning tutor. "
                 f"{INTENT_INSTRUCTIONS[intent]} Answer using only the supplied source. "
                 "Return a single JSON object with answer, citations, and actions. Each citation must "
-                "contain a verbatim quote and supported spanIds. Actions may be empty; use only "
-                "pdf_highlight with a verbatim source quote and one or more matching available spanIds, "
-                "or whiteboard_label with a verbatim "
-                "source label and normalized x/y coordinates from 0 to 1, or quiz with "
-                "question, options (list of strings), correctIndex (integer), and explanation. When a whiteboard image "
+                "contain a verbatim quote (single contiguous exact substring from sourceText without ellipses) "
+                "and supported spanIds from availableSpanIds. You MUST include at least one citation in citations. "
+                "Actions may be empty; each action object must have a 'type' field set to "
+                "'pdf_highlight' (with verbatim quote and matching spanIds), "
+                "'whiteboard_label' (with verbatim source text and normalized x/y coordinates from 0 to 1), "
+                "or 'quiz' (with question, options list of strings, correctIndex integer, and explanation). "
+                "When intent is 'quiz', you MUST include a quiz action object with type='quiz' in actions. "
+                "When a whiteboard image "
                 "is supplied, discuss observable learner marks, distinguish what matches the source "
                 "from uncertainty, and ask for clarification when the drawing is ambiguous. Do not treat "
                 "learner marks as verified source evidence. Actions are proposals, "
                 "not commands, and must not invent facts."
             ),
             "input": input_messages,
-            "max_output_tokens": 1_200,
+            "max_output_tokens": 4_096,
         }
         try:
             response = httpx.post(
@@ -112,7 +126,7 @@ class MetaResponsesQuestionProvider:
                     for block in item.get("content", [])
                     if isinstance(block, dict) and block.get("type") == "output_text"
                 )
-            return QuestionAnswer.model_validate_json(content)
+            return QuestionAnswer.model_validate_json(_strip_json_code_fence(content))
         except httpx.TimeoutException as error:
             raise QuestionProviderTimeoutError from error
         except (
@@ -126,10 +140,21 @@ class MetaResponsesQuestionProvider:
 
 
 def create_meta_question_answer_provider(settings: Settings) -> QuestionAnswerProvider | None:
-    if not settings.meta_model_api_key:
+    api_key = (
+        settings.meta_model_api_key
+        or settings.model_api_key
+        or settings.meta_api_key
+        or os.getenv("MODEL_API_KEY")
+        or os.getenv("META_API_KEY")
+        or os.getenv("META_MODEL_API_KEY")
+    )
+    if not api_key:
+        return None
+    api_key = api_key.strip("'\" \t\r\n")
+    if not api_key:
         return None
     return MetaResponsesQuestionProvider(
-        api_key=settings.meta_model_api_key,
+        api_key=api_key,
         model=settings.meta_model,
         timeout=settings.ai_request_timeout_seconds,
     )

@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     ai_model: str | None = None
     ai_request_timeout_seconds: float = Field(default=30.0, ge=1, le=120)
     meta_model_api_key: str | None = None
+    model_api_key: str | None = None
+    meta_api_key: str | None = None
     meta_model: str = "muse-spark-1.3"
     gemini_api_key: str | None = None
     gemini_tts_model: str = "gemini-3.8-flash-tts"
