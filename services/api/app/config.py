@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     better_auth_timeout_seconds: float = 5.0
     database_url: str = "postgresql+psycopg://pixielearn:pixielearn@localhost:5432/pixielearn"
     redis_url: str = "redis://localhost:6410/0"
-    object_storage_endpoint_url: str = "http://localhost:9100"
+    object_storage_endpoint_url: str = "http://127.0.0.1:9000"
     object_storage_public_endpoint_url: str | None = None
     object_storage_region_name: str = "us-east-1"
     object_storage_bucket: str = "pixielearn-documents"

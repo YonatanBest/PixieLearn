@@ -11,6 +11,7 @@ from app.question_answer import (
     QuestionProviderRequestError,
     QuestionProviderTimeoutError,
 )
+from app.gemini_question_provider import create_gemini_question_answer_provider
 from app.meta_responses_question_provider import create_meta_question_answer_provider
 from app.schemas.questions import QuestionSourceContext, TutorIntent
 
@@ -113,4 +114,6 @@ def create_question_answer_provider(settings: Settings) -> QuestionAnswerProvide
             api_key=settings.ai_api_key,
             timeout=settings.ai_request_timeout_seconds,
         )
+    if settings.gemini_api_key:
+        return create_gemini_question_answer_provider(settings)
     return create_meta_question_answer_provider(settings)

@@ -92,40 +92,77 @@ export default function DocumentTextPreview({ documentId, pageCount, pageIndex, 
   useEffect(() => {
     let active = true
     const previousRender = renderRef.current
-    previousRender?.cancel()
+    renderRef.current = null
+
     setLoading(true)
     setError("")
+
+    function isRenderingCancelled(reason: unknown): boolean {
+      if (!reason) return false
+      const message = reason instanceof Error ? reason.message : String(reason)
+      const name = (reason as { name?: string }).name
+      return name === "RenderingCancelledException" || message.includes("cancelled") || message.includes("Rendering cancelled")
+    }
+
     const renderPage = async () => {
-      await previousRender?.promise.catch(() => undefined)
+      if (previousRender) {
+        previousRender.cancel()
+        await previousRender.promise.catch(() => undefined)
+      }
       if (!active) return
+
       const pdf = pdfRef.current ?? await pdfPromiseRef.current
       if (!pdf) throw new Error("The PDF reader did not initialize.")
+
       const page = await pdf.getPage(pageIndex + 1)
       const fitScale = Math.min(1.4, 780 / page.getViewport({ scale: 1 }).width)
       const scale = fitScale * (zoom / 84)
       const viewport = page.getViewport({ scale })
-      const canvas = canvasRef.current
-      if (!canvas) return
-      const context = canvas.getContext("2d")
-      if (!context) throw new Error("Canvas is unavailable.")
-      const pixelRatio = window.devicePixelRatio || 1
-      canvas.width = Math.ceil(viewport.width * pixelRatio)
-      canvas.height = Math.ceil(viewport.height * pixelRatio)
-      canvas.style.width = `${viewport.width}px`
-      canvas.style.height = `${viewport.height}px`
-      if (active) setPagePixelHeight(viewport.height)
-      renderRef.current = page.render({
-        canvas,
-        canvasContext: context,
-        viewport,
-        transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
-      })
-      await renderRef.current.promise
+
+      const renderWithCanvas = async () => {
+        if (!active) return
+        const canvas = canvasRef.current
+        if (!canvas) return
+        const context = canvas.getContext("2d")
+        if (!context) throw new Error("Canvas is unavailable.")
+
+        const pixelRatio = window.devicePixelRatio || 1
+        canvas.width = Math.ceil(viewport.width * pixelRatio)
+        canvas.height = Math.ceil(viewport.height * pixelRatio)
+        canvas.style.width = `${viewport.width}px`
+        canvas.style.height = `${viewport.height}px`
+
+        if (active) setPagePixelHeight(viewport.height)
+
+        const task = page.render({
+          canvas,
+          canvasContext: context,
+          viewport,
+          transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+        })
+        renderRef.current = task
+        await task.promise
+      }
+
+      try {
+        await renderWithCanvas()
+      } catch (firstError) {
+        if (!active || isRenderingCancelled(firstError)) return
+        const msg = firstError instanceof Error ? firstError.message : String(firstError)
+        if (msg.includes("multiple render")) {
+          await new Promise((resolve) => setTimeout(resolve, 60))
+          if (!active) return
+          await renderWithCanvas()
+        } else {
+          throw firstError
+        }
+      }
     }
+
     renderPage().then(() => {
       if (active) setLoading(false)
     }).catch((reason: unknown) => {
-      if (!active) return
+      if (!active || isRenderingCancelled(reason)) return
       setError(`PDF page could not be rendered: ${reason instanceof Error ? reason.message : String(reason)}`)
       setLoading(false)
     })
